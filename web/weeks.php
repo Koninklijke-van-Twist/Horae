@@ -47,13 +47,34 @@ usort($items, fn($a,$b) => $a['week'] <=> $b['week']);
 ?>
 <form method="get" action="pdf.php">
   <input type="hidden" name="projectNo" value="<?= htmlspecialchars($projectNo) ?>">
-  <label>Week:</label>
-  <select name="tsNo" required>
+
+  <div style="margin-bottom:8px;">
+    <b>Week(en):</b><br>
+    <small>Vink één of meerdere weken aan.</small>
+  </div>
+
+  <div style="border:1px solid #ccc; padding:10px; max-width:650px;">
     <?php foreach ($items as $it): ?>
-      <option value="<?= htmlspecialchars($it['tsNo']) ?>">
-        Week <?= (int)$it['week'] ?> (<?= htmlspecialchars($it['start'] ?? '') ?> – <?= htmlspecialchars($it['end'] ?? '') ?>)
-      </option>
+      <label style="display:block; margin:6px 0;">
+        <input type="checkbox" name="tsNo[]" value="<?= htmlspecialchars($it['tsNo']) ?>">
+        Week <?= (int)$it['week'] ?>
+        (<?= htmlspecialchars($it['start'] ?? '') ?> – <?= htmlspecialchars($it['end'] ?? '') ?>)
+      </label>
     <?php endforeach; ?>
-  </select>
-  <button type="submit">Download PDF</button>
+  </div>
+
+  <div style="margin-top:10px;">
+    <button type="button" onclick="toggleAll(true)">Alles selecteren</button>
+    <button type="button" onclick="toggleAll(false)">Alles deselecteren</button>
+  </div>
+
+  <div style="margin-top:10px;">
+    <button type="submit">Download PDF</button>
+  </div>
 </form>
+
+<script>
+function toggleAll(on) {
+  document.querySelectorAll('input[type="checkbox"][name="tsNo[]"]').forEach(cb => cb.checked = on);
+}
+</script>

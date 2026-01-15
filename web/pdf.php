@@ -4,8 +4,8 @@ require __DIR__ . "/grid.php"; // waar build_timesheet_grid_from_fields staat
 require __DIR__ . "/auth.php";
 
 $projectNo = $_GET['projectNo'] ?? '';
-$tsNo = $_GET['tsNo'] ?? '';
-if ($projectNo === '' || $tsNo === '') die("projectNo/tsNo ontbreekt");
+$tsNos = $_GET['tsNo'] ?? '';
+if ($projectNo === '') die("projectNo/tsNo ontbreekt");
 
 // ---- 1) Project ophalen
 $baseApp = $base;
@@ -16,7 +16,18 @@ $projRows = odata_get_all($projUrl, $auth);
 $project = $projRows[0] ?? ['No'=>$projectNo,'Description'=>''];
 
 // ---- 2) Timesheet header ophalen
-$tsFilter = rawurlencode("No eq '$tsNo'");
+if (!is_array($tsNos) || count($tsNos) === 0) {
+    die("Geen weken geselecteerd");
+}
+
+// basic sanitization (No is Edm.String)
+$tsNos = array_values(array_filter($tsNos, fn($v) => is_string($v) && $v !== ''));
+$parts = array_map(
+    fn($no) => "No eq '" . str_replace("'", "''", $no) . "'",
+    $tsNos
+);
+
+$tsFilter = rawurlencode(implode(" or ", $parts));
 $tsUrl = $baseApp . "Urenstaten?\$select=No,Starting_Date,Ending_Date,Description,Resource_No,Resource_Name,Job_No_Filter&\$filter={$tsFilter}&\$format=json";
 $tsRows = odata_get_all($tsUrl, $auth);
 $ts = $tsRows[0] ?? null;
@@ -24,17 +35,35 @@ if (!$ts) die("Urenstaat niet gevonden");
 
 // ---- 3) Regels ophalen voor timesheet
 $baseRules = "https://kvtmd365.kvt.nl:7148/$environment/ODataV4/Company('Koninklijke%20van%20Twist')/workflowWebhookSubscriptions/";
-$lineFilter = rawurlencode("Time_Sheet_No eq '$tsNo'");
-$linesUrl = $baseApp . "Urenstaatregels?\$select=Header_Resource_No,Field1,Field2,Field3,Field4,Field5,Field6,Field7,Total_Quantity&\$filter={$lineFilter}&\$format=json";
+
+$lineParts = array_map(
+    fn($no) => "Time_Sheet_No eq '" . str_replace("'", "''", $no) . "'",
+    $tsNos
+);
+
+$lineFilter = rawurlencode(implode(" or ", $lineParts));
+
+$linesUrl = $baseApp . "Urenstaatregels?\$select=Time_Sheet_No,Header_Resource_No,Field1,Field2,Field3,Field4,Field5,Field6,Field7,Total_Quantity&\$filter={$lineFilter}&\$format=json";
 $lines = odata_get_all($linesUrl, $auth);
 
 //AppLocations
 $locationsUrl = $baseApp . "JobCard?\$select=Sell_to_Address,No,Sell_to_Post_Code,Sell_to_City,Ship_to_City,Ship_to_Post_Code&\$filter={$projFilter}&\$format=json";
 $locations = odata_get_all($locationsUrl, $auth)[0];
 
+$weeks = [];
+
 // ---- 4) Resources ophalen (light: alleen benodigde No’s)
 $needed = [];
-foreach ($lines as $l) {
+foreach ($lines as &$l) {
+    foreach($tsRows as $tsr)
+    {
+        if($tsr["No"] == $l["Time_Sheet_No"])
+        {
+            $l["Week"] =  $tsr["Description"];
+            array_push($weeks, $tsr["Description"]);
+        }
+    }
+
     $no = (string)($l['Header_Resource_No'] ?? '');
     if ($no !== '') $needed[$no] = true;
 }
@@ -58,11 +87,7 @@ if (count($neededNos) > 0) {
 $grid = build_timesheet_grid_from_fields($lines, $resourcesByNo);
 
 // ---- 6) weekInfo uit header
-$week = 0;
-if (preg_match('/\bWeek\s*(\d+)\b/i', (string)($ts['Description'] ?? ''), $m)) $week = (int)$m[1];
-
 $weekInfo = [
-  'week' => $week,
   'start' => $ts['Starting_Date'] ?? null,
   'end' => $ts['Ending_Date'] ?? null,
 ];

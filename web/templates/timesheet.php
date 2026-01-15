@@ -198,7 +198,7 @@ $dayNames = ['Ma','Di','Wo','Do','Vr','Za','Zo'];
 
   <!-- Kleine tabel boven projectgegevens -->
   <table class="top-mini">
-    <tr class="fullw"><td class="fullw"><p class="blue fullw"><b >Weeknummer</b></p> <?= h($week) ?></td></tr>
+    <!--<tr class="fullw"><td class="fullw"><p class="blue fullw"><b >Weeknummer</b></p> <?= h($week) ?></td></tr>-->
     <tr class="fullw"><td class="fullw"><p class="blue fullw"><b >Startdatum</b></p> <?= h(fmtDateNL($start)) ?></td></tr>
     <tr class="fullw"><td class="fullw"><p class="blue fullw"><b >Einddatum</b></p> <?= h(fmtDateNL($end)) ?></td></tr>
   </table>
@@ -245,6 +245,7 @@ $dayNames = ['Ma','Di','Wo','Do','Vr','Za','Zo'];
       <tr>
         <th class="col-bsn">BSN/Sofinummer</th>
         <th class="col-name">Naam en voorletters werknemer</th>
+        <th class="col-day">Week</th>
         <?php foreach ($dayNames as $dn): ?>
           <th class="col-day"><?= h($dn) ?></th>
         <?php endforeach; ?>
@@ -256,12 +257,14 @@ $dayNames = ['Ma','Di','Wo','Do','Vr','Za','Zo'];
         <?php
           $bsn = $p['bsn'] ?? '';
           $name = $p['name'] ?? '';
+          $week = $p['week'] ?? '';
           $days = $p['days'] ?? array_fill(0,7,0.0);
           $rowTotal = $p['total'] ?? 0.0;
         ?>
         <tr>
           <td><?= h($bsn) ?></td>
           <td class="name"><?= h($name) ?></td>
+          <td class="num"><?= h($week) ?></td>
           <?php for ($i=0; $i<7; $i++): ?>
             <td class="num"><?= h(fmtHours($days[$i] ?? 0)) ?></td>
           <?php endfor; ?>
@@ -275,7 +278,7 @@ $dayNames = ['Ma','Di','Wo','Do','Vr','Za','Zo'];
         for ($i=0; $i<7; $i++) $workdayTotals += (float)($totals['days'][$i] ?? 0);
       ?>
       <tr>
-        <td class="blue" colspan="2" style="text-align:right;"><b>Totaal</b></td>
+        <td class="blue" colspan="3" style="text-align:right;"><b>Totaal</b></td>
         <?php for ($i=0; $i<7; $i++): ?>
             <td class="blue" class="num"><b><?= h(fmtHours($totals['days'][$i] ?? 0)) ?></b></td>
         <?php endfor; ?>

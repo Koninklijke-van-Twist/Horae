@@ -1,13 +1,39 @@
 <?php
-function odata_get_all(string $url, array $auth): array
+function odata_get_all(string $url, array $auth, $ttlSeconds = 3600): array
 {
+    $cacheKey = build_cache_key($url, $auth);
+    $cachePath = cache_path_for_key($cacheKey);
+
+    if (is_file($cachePath)) 
+    {
+        $age = time() - filemtime($cachePath);
+
+        if ($age >= 0 && $age < $ttlSeconds) 
+        {
+            $raw = file_get_contents($cachePath);
+            $data = json_decode($raw, true);
+
+            if (is_array($data)) 
+            {
+                return $data;
+            }
+
+            @unlink($cachePath);
+        } 
+        else 
+        {
+            @unlink($cachePath);
+        }
+    }
+
     $all = [];
     $next = $url;
 
     while ($next) {
         $resp = odata_get_json($next, $auth);
 
-        if (!isset($resp['value']) || !is_array($resp['value'])) {
+        if (!isset($resp['value']) || !is_array($resp['value'])) 
+        {
             throw new Exception("OData response missing 'value' array");
         }
 
@@ -15,6 +41,7 @@ function odata_get_all(string $url, array $auth): array
         $next = $resp['@odata.nextLink'] ?? null;
     }
 
+    write_cache_json($cachePath, $all);
     return $all;
 }
 
@@ -61,4 +88,39 @@ function odata_get_json(string $url, array $auth): array
     }
 
     return $json;
+}
+
+function build_cache_key(string $url, array $auth): string
+{
+    $user = (string)($auth['user'] ?? '');
+    return $url . '|' . $user;
+}
+
+function cache_base_dir(): string
+{
+    $dir = __DIR__ . "/cache/odata";
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0777, true);
+    }
+    return $dir;
+}
+
+function cache_path_for_key(string $cacheKey): string
+{
+    // bestandsnaam moet veilig en niet te lang: hash is ideaal
+    $hash = hash('sha256', $cacheKey);
+    return cache_base_dir() . "/" . $hash . ".json";
+}
+
+function write_cache_json(string $path, array $data): void
+{
+    $tmp = $path . ".tmp";
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE);
+
+    if ($json === false) {
+        throw new Exception("Failed to encode cache JSON");
+    }
+
+    file_put_contents($tmp, $json, LOCK_EX);
+    rename($tmp, $path);
 }

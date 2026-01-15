@@ -7,66 +7,15 @@ function dow_nl_index(string $dateYmd): int
     return $w - 1;
 }
 
-function build_timesheet_grid(array $rows): array
-{
-    // result:
-    // [
-    //   'people' => [
-    //      '223941694' => ['bsn'=>'..','name'=>'..','days'=>[0=>..,1=>..,..], 'total'=>..],
-    //   ],
-    //   'totals' => ['days'=>[0=>..], 'mon_fri'=>.., 'all'=>..]
-    // ]
-    $people = [];
-    $dayTotals = array_fill(0, 7, 0.0);
-
-    foreach ($rows as $r) {
-        $bsn  = (string)($r['Bsn'] ?? $r['BSN'] ?? $r['Sofi'] ?? '');     // <-- aanpassen
-        $name = (string)($r['EmployeeName'] ?? $r['Name'] ?? '');         // <-- aanpassen
-        $date = (string)($r['WorkDate'] ?? $r['Date'] ?? '');             // <-- aanpassen
-        $hrs  = (float)($r['Hours'] ?? $r['Quantity'] ?? 0);              // <-- aanpassen
-
-        if ($bsn === '' || $date === '') continue;
-
-        $d = dow_nl_index($date);
-
-        if (!isset($people[$bsn])) {
-            $people[$bsn] = [
-                'bsn' => $bsn,
-                'name' => $name,
-                'days' => array_fill(0, 7, 0.0),
-                'total' => 0.0,
-            ];
-        }
-
-        $people[$bsn]['days'][$d] += $hrs;
-        $people[$bsn]['total']    += $hrs;
-        $dayTotals[$d]            += $hrs;
-    }
-
-    // totalen
-    $monFri = 0.0;
-    for ($i = 0; $i < 5; $i++) $monFri += $dayTotals[$i];
-
-    return [
-        'people' => $people,
-        'totals' => [
-            'days' => $dayTotals,
-            'mon_fri' => $monFri,
-            'all' => array_sum($dayTotals),
-        ]
-    ];
-}
-
 function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo): array
 {
     $people = [];
     $dayTotals = array_fill(0, 7, 0.0); // Ma..Zo
 
+    $i = 0;
     foreach ($lines as $line) {
+        $i++;
         $resourceNo = (string)($line['Header_Resource_No'] ?? '');
-        if ($resourceNo === '') {
-            continue;
-        }
 
         // Resource lookup
         $res = $resourcesByNo[$resourceNo] ?? null;
@@ -81,22 +30,23 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo): a
         }
 
         // Init werknemer
-        if (!isset($people[$resourceNo])) {
-            $people[$resourceNo] = [
-                'bsn'   => $bsn,
-                'name'  => $name,
-                'days'  => array_fill(0, 7, 0.0),
-                'total' => 0.0,
-            ];
-        }
-
+        $person = [
+            'bsn'   => $bsn,
+            'name'  => $name,
+            'week' => substr((string)($line['Week'] ?? ''), 4, 5),
+            'days'  => array_fill(0, 7, 0.0),
+            'total' => 0.0,
+        ];
+        
         // Optellen
         for ($d = 0; $d < 7; $d++) {
-            $people[$resourceNo]['days'][$d] += $days[$d];
+            $person['days'][$d] += $days[$d];
             $dayTotals[$d] += $days[$d];
         }
 
-        $people[$resourceNo]['total'] += array_sum($days);
+        $person['total'] += array_sum($days);
+
+        array_push($people, $person);
     }
 
     // Ma–Vr totaal
