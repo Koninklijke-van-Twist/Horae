@@ -1,4 +1,5 @@
 <?php
+
 function odata_get_all(string $url, array $auth, $ttlSeconds = 3600): array
 {
     $cacheKey = build_cache_key($url, $auth);
@@ -92,8 +93,9 @@ function odata_get_json(string $url, array $auth): array
 
 function build_cache_key(string $url, array $auth): string
 {
+    require __DIR__ . "/auth.php";
     $user = (string)($auth['user'] ?? '');
-    return $url . '|' . $user;
+    return $url . '|' . $user . '|' . $environment;
 }
 
 function cache_base_dir(): string

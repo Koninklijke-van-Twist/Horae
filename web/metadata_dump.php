@@ -2,21 +2,22 @@
 require __DIR__ . "/odata.php"; // jouw curl helper (basic/ntlm)
 require __DIR__ . "/auth.php";
 
-$service = "";
-$xmlStr = odata_get_raw($base . $service . "\$metadata", $auth);
+$service = "AppResource";
+$xmlStr = odata_get_raw("https://kvtmd365.kvt.nl:7148/$environment/ODataV4/\$metadata", $auth);
 
 $xml = simplexml_load_string($xmlStr);
-if ($xml === false) die("Metadata XML niet leesbaar");
+if ($xml === false)
+    die("Metadata XML niet leesbaar");
 
 $xml->registerXPathNamespace('edmx', 'http://docs.oasis-open.org/odata/ns/edmx');
-$xml->registerXPathNamespace('edm',  'http://docs.oasis-open.org/odata/ns/edm');
+$xml->registerXPathNamespace('edm', 'http://docs.oasis-open.org/odata/ns/edm');
 
 // 1) entity sets -> entity type mapping
 $entitySets = $xml->xpath('//edm:EntityContainer/edm:EntitySet');
 $map = [];
 foreach ($entitySets as $es) {
-    $name = (string)$es['Name'];       // bv "Urenstaatregels"
-    $type = (string)$es['EntityType']; // bv "Microsoft.NAV.Urenstaatregels"
+    $name = (string) $es['Name'];       // bv "Urenstaatregels"
+    $type = (string) $es['EntityType']; // bv "Microsoft.NAV.Urenstaatregels"
     $map[$name] = $type;
 }
 
@@ -35,7 +36,7 @@ foreach ($map as $setName => $typeFull) {
     $props = $xml->xpath("//edm:EntityType[@Name='{$typeName}']/edm:Property");
     echo "\n[$setName]\n";
     foreach ($props as $p) {
-        echo "  - " . (string)$p['Name'] . " : " . (string)$p['Type'] . "\n";
+        echo "  - " . (string) $p['Name'] . " : " . (string) $p['Type'] . "\n";
     }
 }
 echo "</pre>";
@@ -63,7 +64,8 @@ function odata_get_raw(string $url, array $auth): string
 
 
     $raw = curl_exec($ch);
-    if ($raw === false) throw new Exception("cURL error: " . curl_error($ch));
+    if ($raw === false)
+        throw new Exception("cURL error: " . curl_error($ch));
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 

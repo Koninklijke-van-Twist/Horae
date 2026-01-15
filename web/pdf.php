@@ -5,7 +5,8 @@ require __DIR__ . "/auth.php";
 
 $projectNo = $_GET['projectNo'] ?? '';
 $tsNos = $_GET['tsNo'] ?? '';
-if ($projectNo === '') die("projectNo/tsNo ontbreekt");
+if ($projectNo === '')
+    die("projectNo/tsNo ontbreekt");
 
 // ---- 1) Project ophalen
 $baseApp = $base;
@@ -13,7 +14,7 @@ $baseApp = $base;
 $projFilter = rawurlencode("No eq '$projectNo'");
 $projUrl = $baseApp . "AppProjecten?\$select=No,LVS_Bill_to_Name,Description,LVS_Job_Location&\$filter={$projFilter}&\$format=json";
 $projRows = odata_get_all($projUrl, $auth);
-$project = $projRows[0] ?? ['No'=>$projectNo,'Description'=>''];
+$project = $projRows[0] ?? ['No' => $projectNo, 'Description' => ''];
 
 // ---- 2) Timesheet header ophalen
 if (!is_array($tsNos) || count($tsNos) === 0) {
@@ -31,7 +32,8 @@ $tsFilter = rawurlencode(implode(" or ", $parts));
 $tsUrl = $baseApp . "Urenstaten?\$select=No,Starting_Date,Ending_Date,Description,Resource_No,Resource_Name,Job_No_Filter&\$filter={$tsFilter}&\$format=json";
 $tsRows = odata_get_all($tsUrl, $auth);
 $ts = $tsRows[0] ?? null;
-if (!$ts) die("Urenstaat niet gevonden");
+if (!$ts)
+    die("Urenstaat niet gevonden");
 
 // ---- 3) Regels ophalen voor timesheet
 $baseRules = "https://kvtmd365.kvt.nl:7148/$environment/ODataV4/Company('Koninklijke%20van%20Twist')/workflowWebhookSubscriptions/";
@@ -43,7 +45,7 @@ $lineParts = array_map(
 
 $lineFilter = rawurlencode(implode(" or ", $lineParts));
 
-$linesUrl = $baseApp . "Urenstaatregels?\$select=Time_Sheet_No,Header_Resource_No,Field1,Field2,Field3,Field4,Field5,Field6,Field7,Total_Quantity&\$filter={$lineFilter}&\$format=json";
+$linesUrl = $baseApp . "Urenstaatregels?\$select=Time_Sheet_No,Work_Type_Code,Header_Resource_No,Field1,Field2,Field3,Field4,Field5,Field6,Field7,Total_Quantity&\$filter={$lineFilter}&\$format=json";
 $lines = odata_get_all($linesUrl, $auth);
 
 //AppLocations
@@ -55,17 +57,16 @@ $weeks = [];
 // ---- 4) Resources ophalen (light: alleen benodigde No’s)
 $needed = [];
 foreach ($lines as &$l) {
-    foreach($tsRows as $tsr)
-    {
-        if($tsr["No"] == $l["Time_Sheet_No"])
-        {
-            $l["Week"] =  $tsr["Description"];
+    foreach ($tsRows as $tsr) {
+        if ($tsr["No"] == $l["Time_Sheet_No"]) {
+            $l["Week"] = $tsr["Description"];
             array_push($weeks, $tsr["Description"]);
         }
     }
 
-    $no = (string)($l['Header_Resource_No'] ?? '');
-    if ($no !== '') $needed[$no] = true;
+    $no = (string) ($l['Header_Resource_No'] ?? '');
+    if ($no !== '')
+        $needed[$no] = true;
 }
 $neededNos = array_keys($needed);
 
@@ -75,11 +76,11 @@ if (count($neededNos) > 0) {
     // Let op: bij veel resources kan de URL lang worden; dan is "alles ophalen" beter.
     $parts = array_map(fn($n) => "No eq '$n'", $neededNos);
     $resFilter = rawurlencode(implode(" or ", $parts));
-    $resUrl = $baseApp . "AppResources?\$select=No,Name,LVS_No_2&\$filter={$resFilter}&\$format=json";
+    $resUrl = $baseApp . "AppResource?\$select=No,Name,LVS_No_2,Social_Security_No&\$filter={$resFilter}&\$format=json";
     $resRows = odata_get_all($resUrl, $auth);
 
     foreach ($resRows as $r) {
-        $resourcesByNo[(string)$r['No']] = $r;
+        $resourcesByNo[(string) $r['No']] = $r;
     }
 }
 
@@ -88,16 +89,16 @@ $grid = build_timesheet_grid_from_fields($lines, $resourcesByNo);
 
 // ---- 6) weekInfo uit header
 $weekInfo = [
-  'start' => $ts['Starting_Date'] ?? null,
-  'end' => $ts['Ending_Date'] ?? null,
+    'start' => $ts['Starting_Date'] ?? null,
+    'end' => $ts['Ending_Date'] ?? null,
 ];
 
 // ---- 7) contractor placeholders (later invullen uit project)
 $contractor = [
-  'Naam' => $project['LVS_Bill_to_Name'] ?? '', // voorbeeld, als je dat wil
-  'Adres' => $locations['Sell_to_Address'],
-  'Postcode' => $locations['Sell_to_Post_Code'],
-  'Woonplaats' => $locations['Sell_to_City'],
+    'Naam' => $project['LVS_Bill_to_Name'] ?? '', // voorbeeld, als je dat wil
+    'Adres' => $locations['Sell_to_Address'],
+    'Postcode' => $locations['Sell_to_Post_Code'],
+    'Woonplaats' => $locations['Sell_to_City'],
 ];
 
 // ---- 8) HTML render
@@ -110,7 +111,7 @@ die;
 
 // ---- 9) PDF render (wkhtmltopdf)
 $tmpHtml = tempnam(sys_get_temp_dir(), "ts_") . ".html";
-$tmpPdf  = tempnam(sys_get_temp_dir(), "ts_") . ".pdf";
+$tmpPdf = tempnam(sys_get_temp_dir(), "ts_") . ".pdf";
 file_put_contents($tmpHtml, $html);
 
 $cmd = "wkhtmltopdf --encoding utf-8 " . escapeshellarg($tmpHtml) . " " . escapeshellarg($tmpPdf);
