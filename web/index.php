@@ -2,9 +2,12 @@
 require __DIR__ . "/odata.php";
 require __DIR__ . "/auth.php";
 
+$hour = 3600;
+$day = $hour * 24;
+
 // 1) Bepaal welke projecten regels hebben (distinct Job_No uit Urenstaatregels)
 $rulesUrl = $base . "Urenstaatregels?\$select=Job_No,Work_Type_Code&\$format=json&\$filter=Work_Type_Code%20ne%20'KM'";
-$rules = odata_get_all($rulesUrl, $auth);
+$rules = odata_get_all($rulesUrl, $auth, $day);
 
 $projectsWithRules = [];
 foreach ($rules as $r) {
@@ -15,7 +18,7 @@ foreach ($rules as $r) {
 
 // 2) Haal alle projecten op en filter lokaal
 $projUrl = $base . "AppProjecten?\$select=No,Description&\$format=json";
-$projects = odata_get_all($projUrl, $auth);
+$projects = odata_get_all($projUrl, $auth, $day);
 
 $projects = array_values(array_filter($projects, function ($p) use ($projectsWithRules) {
   $no = (string) ($p['No'] ?? '');

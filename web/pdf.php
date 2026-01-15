@@ -30,7 +30,7 @@ $parts = array_map(
 
 $tsFilter = rawurlencode(implode(" or ", $parts));
 $tsUrl = $baseApp . "Urenstaten?\$select=No,Starting_Date,Ending_Date,Description,Resource_No,Resource_Name,Job_No_Filter&\$filter={$tsFilter}&\$format=json";
-$tsRows = odata_get_all($tsUrl, $auth);
+$tsRows = odata_get_all($tsUrl, $auth, 60);
 $ts = $tsRows[0] ?? null;
 if (!$ts)
     die("Urenstaat niet gevonden");
@@ -46,7 +46,7 @@ $lineParts = array_map(
 $lineFilter = rawurlencode(implode(" or ", $lineParts));
 
 $linesUrl = $baseApp . "Urenstaatregels?\$select=Time_Sheet_No,Work_Type_Code,Header_Resource_No,Field1,Field2,Field3,Field4,Field5,Field6,Field7,Total_Quantity&\$filter={$lineFilter}&\$format=json";
-$lines = odata_get_all($linesUrl, $auth);
+$lines = odata_get_all($linesUrl, $auth, 60);
 
 //AppLocations
 $locationsUrl = $baseApp . "JobCard?\$select=Sell_to_Address,No,Sell_to_Post_Code,Sell_to_City,Ship_to_City,Ship_to_Post_Code&\$filter={$projFilter}&\$format=json";
