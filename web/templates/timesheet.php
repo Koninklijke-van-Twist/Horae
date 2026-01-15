@@ -131,7 +131,7 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
 
     .top-mini {
       width: 10%;
-      margin-left: 90%;
+      float: right;
       margin-bottom: 8px;
       margin-top: 0px;
     }
@@ -268,6 +268,18 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
     .declarations li {
       margin: 2px 0;
     }
+
+    .logo-wrap {
+      display: table-cell;
+      justify-content: center;
+      margin: 6px 0 18px;
+    }
+
+    .logo {
+      height: 80px;
+      width: auto;
+      object-fit: contain;
+    }
   </style>
 </head>
 
@@ -285,20 +297,34 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
     }
   </style>
 
-  <!-- Kleine tabel boven projectgegevens -->
-  <table class="top-mini">
-    <!--<tr class="fullw"><td class="fullw"><p class="blue fullw"><b >Weeknummer</b></p> <?= h($week) ?></td></tr>-->
-    <tr class="fullw">
-      <td class="fullw">
-        <p class="blue fullw"><b>Startdatum</b></p> <?= h(fmtDateNL($start)) ?>
+  <table style="width:100%;">
+    <tr>
+      <td>
+        <div class=" logo-wrap">
+          <img class="logo" src="images/kvtlogo_full.png" alt="Logo">
+        </div>
       </td>
-    </tr>
-    <tr class="fullw">
-      <td class="fullw">
-        <p class="blue fullw"><b>Einddatum</b></p> <?= h(fmtDateNL($end)) ?>
+      <td>
+        <table class="top-mini">
+          <!--<tr class="fullw"><td class="fullw"><p class="blue fullw"><b >Weeknummer</b></p> <?= h($week) ?></td></tr>-->
+          <tr class="fullw">
+            <td class="fullw">
+              <p class="blue fullw"><b>Startdatum</b></p>
+              <?= h(fmtDateNL($start)) ?>
+            </td>
+          </tr>
+          <tr class="fullw">
+            <td class="fullw">
+              <p class="blue fullw"><b>Einddatum</b></p>
+              <?= h(fmtDateNL($end)) ?>
+            </td>
+          </tr>
+        </table>
       </td>
     </tr>
   </table>
+  <!-- Kleine tabel boven projectgegevens -->
+
 
   <!-- 3 tabellen naast elkaar -->
   <div class="row top3">
