@@ -3,18 +3,51 @@ require __DIR__ . "/odata.php";
 require __DIR__ . "/grid.php"; // waar build_timesheet_grid_from_fields staat
 require __DIR__ . "/auth.php";
 
-$projectNo = $_GET['projectNo'] ?? '';
+function h($v): string
+{
+    return htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+}
+
+function fmtDateNL($ymd): string
+{
+    if (!$ymd)
+        return '';
+    $ts = strtotime($ymd);
+    if (!$ts)
+        return h($ymd);
+    return date('d-m-Y', $ts);
+}
+
+function fmtHours($n): string
+{
+    // toon 0 als leeg; anders met komma
+    $f = (float) $n;
+    if (abs($f) < 0.00001)
+        return '';
+    // maximaal 2 decimalen, met komma
+    return str_replace('.', ',', rtrim(rtrim(number_format($f, 2, '.', ''), '0'), '.'));
+}
+
+function array_find(array $array, callable $callback): mixed
+{
+    foreach ($array as $key => $value) {
+        if ($callback($value, $key)) {
+            return $value;
+        }
+    }
+
+    return null;
+}
+
 $tsNos = $_GET['tsNo'] ?? '';
-if ($projectNo === '')
-    die("projectNo/tsNo ontbreekt");
 
 // ---- 1) Project ophalen
 $baseApp = $base;
 
-$projFilter = rawurlencode("No eq '$projectNo'");
-$projUrl = $baseApp . "AppProjecten?\$select=No,LVS_Bill_to_Name,Description,LVS_Job_Location&\$filter={$projFilter}&\$format=json";
-$projRows = odata_get_all($projUrl, $auth);
-$project = $projRows[0] ?? ['No' => $projectNo, 'Description' => ''];
+$projectNos = $_GET['projectNo'] ?? [];
+if (!is_array($projectNos))
+    $projectNos = [$projectNos];
+$projectNos = array_values(array_filter(array_map('trim', $projectNos), fn($x) => $x !== ''));
 
 // ---- 2) Timesheet header ophalen
 if (!is_array($tsNos) || count($tsNos) === 0) {
@@ -45,12 +78,11 @@ $lineParts = array_map(
 
 $lineFilter = rawurlencode(implode(" or ", $lineParts));
 
-$linesUrl = $baseApp . "Urenstaatregels?\$select=Time_Sheet_No,Work_Type_Code,Header_Resource_No,Field1,Field2,Field3,Field4,Field5,Field6,Field7,Total_Quantity&\$filter={$lineFilter}&\$format=json";
+$linesUrl = $baseApp . "Urenstaatregels?\$select=Time_Sheet_No,Job_No,Work_Type_Code,Header_Resource_No,Field1,Field2,Field3,Field4,Field5,Field6,Field7,Total_Quantity&\$filter={$lineFilter}&\$format=json";
 $lines = odata_get_all($linesUrl, $auth, 60);
 
 //AppLocations
-$locationsUrl = $baseApp . "JobCard?\$select=Sell_to_Address,No,Sell_to_Post_Code,Sell_to_City,Ship_to_City,Ship_to_Post_Code&\$filter={$projFilter}&\$format=json";
-$locations = odata_get_all($locationsUrl, $auth)[0];
+
 
 $weeks = [];
 
@@ -85,46 +117,55 @@ if (count($neededNos) > 0) {
 }
 
 // ---- 5) Grid bouwen
-$grid = build_timesheet_grid_from_fields($lines, $resourcesByNo);
+$grid = build_timesheet_grid_from_fields($lines, $resourcesByNo, $projectNos, $tsRows);
 
-// ---- 6) weekInfo uit header
-$weekInfo = [
-    'start' => $ts['Starting_Date'] ?? null,
-    'end' => $ts['Ending_Date'] ?? null,
-];
+foreach ($grid['projects'] as $gridProject) {
 
-// ---- 7) contractor placeholders (later invullen uit project)
-$contractor = [
-    'Naam' => $project['LVS_Bill_to_Name'] ?? '', // voorbeeld, als je dat wil
-    'Adres' => $locations['Sell_to_Address'],
-    'Postcode' => $locations['Sell_to_Post_Code'],
-    'Woonplaats' => $locations['Sell_to_City'],
-];
+    $projectNo = $gridProject['projectNo'] ?? '';
+    $projFilter = rawurlencode("No eq '$projectNo'");
+    $projUrl = $baseApp . "AppProjecten?\$select=No,Your_Reference,LVS_Bill_to_Name,Description,LVS_Job_Location&\$filter={$projFilter}&\$format=json";
+    $projRows = odata_get_all($projUrl, $auth);
+    $project = $projRows[0] ?? ['No' => $projectNo, 'Description' => ''];
 
-// ---- 8) HTML render
-ob_start();
-include __DIR__ . "/templates/timesheet.php";
-$html = ob_get_clean();
+    $locationsUrl = $baseApp . "JobCard?\$select=Sell_to_Address,No,Sell_to_Post_Code,Sell_to_City,Ship_to_City,Ship_to_Post_Code&\$filter={$projFilter}&\$format=json";
+    $locations = odata_get_all($locationsUrl, $auth)[0];
 
-echo $html;
-die;
+    $startDate = "onbekend";
+    $endDate = "onbekend";
 
-// ---- 9) PDF render (wkhtmltopdf)
-$tmpHtml = tempnam(sys_get_temp_dir(), "ts_") . ".html";
-$tmpPdf = tempnam(sys_get_temp_dir(), "ts_") . ".pdf";
-file_put_contents($tmpHtml, $html);
+    $wL = 999;
+    $wH = -1;
+    foreach ($gridProject['people'] as $person) {
+        if ($person['week'] > $wH) {
+            $wH = $person['week'];
+            $endDate = $person['endDate'];
+        }
 
-$cmd = "wkhtmltopdf --encoding utf-8 " . escapeshellarg($tmpHtml) . " " . escapeshellarg($tmpPdf);
-exec($cmd, $out, $code);
+        if ($person['week'] < $wL) {
+            $wL = $person['week'];
+            $startDate = $person['startDate'];
+        }
+    }
 
-if ($code !== 0 || !file_exists($tmpPdf)) {
-    @unlink($tmpHtml);
-    throw new Exception("wkhtmltopdf faalde (exit $code). Output:\n" . implode("\n", $out));
+    // ---- 6) weekInfo uit header
+    $weekInfo = [
+        'start' => $startDate,
+        'end' => $endDate,
+    ];
+
+    // ---- 7) contractor placeholders (later invullen uit project)
+    $contractor = [
+        'Naam' => $project['LVS_Bill_to_Name'] ?? '', // voorbeeld, als je dat wil
+        'Adres' => $locations['Sell_to_Address'],
+        'Postcode' => $locations['Sell_to_Post_Code'],
+        'Woonplaats' => $locations['Sell_to_City'],
+    ];
+
+    // ---- 8) HTML render
+
+    ob_start();
+    include __DIR__ . "/templates/timesheet.php";
+    $html = ob_get_clean();
+
+    echo $html;
 }
-
-header("Content-Type: application/pdf");
-header("Content-Disposition: attachment; filename=\"urenstaat_{$projectNo}_{$tsNo}.pdf\"");
-readfile($tmpPdf);
-
-@unlink($tmpHtml);
-@unlink($tmpPdf);

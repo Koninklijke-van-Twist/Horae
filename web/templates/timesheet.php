@@ -7,31 +7,6 @@
 
 $signSize = 3;
 
-function h($v): string
-{
-  return htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
-}
-
-function fmtDateNL($ymd): string
-{
-  if (!$ymd)
-    return '';
-  $ts = strtotime($ymd);
-  if (!$ts)
-    return h($ymd);
-  return date('d-m-Y', $ts);
-}
-
-function fmtHours($n): string
-{
-  // toon 0 als leeg; anders met komma
-  $f = (float) $n;
-  if (abs($f) < 0.00001)
-    return '';
-  // maximaal 2 decimalen, met komma
-  return str_replace('.', ',', rtrim(rtrim(number_format($f, 2, '.', ''), '0'), '.'));
-}
-
 $contractor = $contractor ?? [
   'Naam' => '',
   'Adres' => '',
@@ -40,6 +15,7 @@ $contractor = $contractor ?? [
 ];
 
 $projectNo = $project['No'] ?? '';
+$projectRef = $project['Your_Reference'] ?? '';
 $projectDesc = $project['Description'] ?? '';
 
 $projPostcode = $locations['Ship_to_Post_Code'] ?? $project['Post_Code'] ?? '';
@@ -51,9 +27,6 @@ $end = $weekInfo['end'] ?? null;
 
 // people sorteer op naam (stabiel)
 $people = $grid['people'] ?? [];
-uasort($people, function ($a, $b) {
-  return strcmp(($a['name'] ?? ''), ($b['name'] ?? ''));
-});
 
 $totals = $grid['totals'] ?? ['days' => array_fill(0, 7, 0.0), 'all' => 0.0];
 
@@ -254,6 +227,13 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
       padding: 2px;
     }
 
+    .sign-name {
+      font-weight: bold;
+      background-color: #0099cc;
+      margin-top: 2px;
+      padding: 2px;
+    }
+
     .declarations {
       border: 1px solid #000;
       padding: 6px 8px;
@@ -280,6 +260,16 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
       width: auto;
       object-fit: contain;
     }
+
+    .titletext {
+      font-size: 30pt;
+      padding-bottom: 5pt;
+    }
+
+    .underline {
+      border-bottom: 1px solid black;
+
+    }
   </style>
 
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -288,9 +278,28 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
   <link rel="manifest" href="site.webmanifest">
 </head>
 
-<body class="tight">
+<timesheet class="tight no-print" id="<?= $projectNo ?>">
+  <script>
+    function printOnly (id)
+    {
+      const el = document.getElementById(id);
+      if (!el) return;
+
+      el.classList.remove('no-print');
+
+      document.title = "Mandagenregister <?= $projectNo ?>";
+
+      window.print();
+
+      setTimeout(() =>
+      {
+        el.classList.add('no-print');
+      }, 500);
+    }
+  </script>
+
   <div class="no-print" style="margin-bottom:10px;">
-    <button onclick="window.print()">Print / Opslaan als PDF</button>
+    <button onclick="printOnly('<?= $projectNo ?>')">Print / Opslaan als PDF</button>
     <a href="."><button>Terug naar beginscherm</button></a>
   </div>
 
@@ -307,6 +316,7 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
       <td>
         <div class=" logo-wrap">
           <img class="logo" src="images/kvtlogo_full.png" alt="Logo">
+          <span class="titletext">&nbsp;&nbsp;&nbsp;&nbsp;Mandagenregister</span>
         </div>
       </td>
       <td>
@@ -390,8 +400,8 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
           <th colspan="2">Projectgegevens</th>
         </tr>
         <tr>
-          <td class="blue" style="width:42%;">Projectnummer<br />&nbsp;</td>
-          <td><?= h($projectNo) ?></td>
+          <td class="blue" style="width:42%;">Opdrachtnummer<br />&nbsp;</td>
+          <td><?= h($projectRef) ?></td>
         </tr>
         <tr>
           <td class="blue">Project<br />&nbsp;</td>
@@ -416,7 +426,6 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
         <th class="col-bsn">BSN/Sofinummer</th>
         <th class="col-name">Naam en voorletters werknemer</th>
         <th class="col-day">Week</th>
-        <th class="col-day">Werksoort</th>
         <?php foreach ($dayNames as $dn): ?>
           <th class="col-day"><?= h($dn) ?></th>
         <?php endforeach; ?>
@@ -424,11 +433,10 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
       </tr>
     </thead>
     <tbody>
-      <?php foreach ($people as $p): ?>
+      <?php foreach ($gridProject['people'] as $p): ?>
         <?php
         $bsn = $p['bsn'] ?? '';
-        $workType = $p['workType'] ?? '';
-        $name = $p['name'] ?? '';
+        $name = $p['name'] . $p['project'] ?? '';
         $week = $p['week'] ?? '';
         $days = $p['days'] ?? array_fill(0, 7, 0.0);
         $rowTotal = $p['total'] ?? 0.0;
@@ -437,7 +445,6 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
           <td><?= h($bsn) ?></td>
           <td class="name"><?= h($name) ?></td>
           <td class="num"><?= h($week) ?></td>
-          <td class="num"><?= h($workType) ?></td>
           <?php for ($i = 0; $i < 7; $i++): ?>
             <td class="num"><?= h(fmtHours($days[$i] ?? 0)) ?></td>
           <?php endfor; ?>
@@ -452,7 +459,7 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
         $workdayTotals += (float) ($totals['days'][$i] ?? 0);
       ?>
       <tr>
-        <td class="blue" colspan="4" style="text-align:right;"><b>Totaal</b></td>
+        <td class="blue" colspan="3" style="text-align:right;"><b>Totaal</b></td>
         <?php for ($i = 0; $i < 7; $i++): ?>
           <td class="blue" class="num"><b><?= h(fmtHours($totals['days'][$i] ?? 0)) ?></b></td>
         <?php endfor; ?>
@@ -479,18 +486,18 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
       <td>
         <div class="sign-row">
           <div class="sign">
-            <span class="sign-title">Naam hoofdaannemer:</span>
-            <div class="sign-title">Handtekening hoofdaannemer</div>
+            <span class="sign-name">Naam hoofdaannemer:</span><br>&nbsp;
+            <div class="sign-title underline">Handtekening hoofdaannemer</div>
             <?php for ($i = 0; $i < $signSize; $i++): ?><br />&nbsp;<?php endfor; ?>
           </div>
           <div class="sign">
-            <span class="sign-title">Naam onderaannemer:</span>
-            <div class="sign-title">Handtekening onderaannemer</div>
+            <span class="sign-name">Naam onderaannemer:</span><br>&nbsp;
+            <div class="sign-title underline">Handtekening onderaannemer</div>
             <?php for ($i = 0; $i < $signSize; $i++): ?><br />&nbsp;<?php endfor; ?>
           </div>
           <div class="sign">
-            <span class="sign-title">Naam uitvoerder:</span>
-            <div class="sign-title">Handtekening uitvoerder</div>
+            <span class="sign-name">Naam uitvoerder:</span><br>&nbsp;
+            <div class="sign-title underline">Handtekening uitvoerder</div>
             <?php for ($i = 0; $i < $signSize; $i++): ?><br />&nbsp;<?php endfor; ?>
           </div>
         </div>
@@ -503,6 +510,9 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
   <!-- Verklaringenblok -->
 
 
-</body>
+</timesheet>
+<br class="no-print" />
+<hr class="no-print" />
+<br class="no-print" />
 
 </html>

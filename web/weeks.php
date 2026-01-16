@@ -2,25 +2,54 @@
 require __DIR__ . "/odata.php";
 require __DIR__ . "/auth.php";
 
-$projectNo = $_GET['projectNo'] ?? '';
-if ($projectNo === '')
+$projectNos = $_GET['projectNo'] ?? [];
+if (!is_array($projectNos))
+  $projectNos = [$projectNos];
+$projectNos = array_values(array_filter(array_map('trim', $projectNos), fn($x) => $x !== ''));
+
+if (count($projectNos) === 0)
   die("projectNo ontbreekt");
 
-// 1) Urenstaten binnen dit project (headers)
-$filter = rawurlencode("Job_No_Filter eq '$projectNo'");
-$url = $base . "Urenstaten?\$select=No,Starting_Date,Ending_Date,Description,Job_No_Filter&\$filter={$filter}&\$format=json";
+// helper: OData OR filter maken voor string field
+function odata_or_filter(string $field, array $values): string
+{
+  $parts = array_map(function ($v) use ($field) {
+    $v = str_replace("'", "''", $v);
+    return "$field eq '$v'";
+  }, $values);
+  return rawurlencode(implode(" or ", $parts));
+}
+
+// 1) Urenstaten binnen deze projecten (headers)
+$tsFilter = odata_or_filter("Job_No_Filter", $projectNos);
+$url = $base . "Urenstaten?\$select=No,Starting_Date,Ending_Date,Description,Job_No_Filter&\$filter={$tsFilter}&\$format=json";
 $timesheets = odata_get_all($url, $auth);
 
-// 2) Welke Time_Sheet_No's hebben regels binnen dit project?
-$rulesFilter = rawurlencode("Job_No eq '$projectNo' and Work_Type_Code ne 'KM'");
-$rulesUrl = $base . "Urenstaatregels?\$select=Time_Sheet_No&\$filter={$rulesFilter}&\$format=json";
+// 2) Welke Time_Sheet_No's hebben regels binnen deze projecten?
+$rulesFilter = odata_or_filter("Job_No", $projectNos);
+// Work_Type_Code ne 'KM' erachter (niet encoden, want filter is al encoded -> dus combineren vóór rawurlencode)
+$rulesFilterDecoded = implode(" or ", array_map(fn($p) => "Job_No eq '" . str_replace("'", "''", $p) . "'", $projectNos));
+$rulesFilterDecoded = "(" . $rulesFilterDecoded . ") and Work_Type_Code ne 'KM'";
+$rulesFilter = rawurlencode($rulesFilterDecoded);
+
+$rulesUrl = $base . "Urenstaatregels?\$select=Time_Sheet_No,Job_No&\$filter={$rulesFilter}&\$format=json";
 $rules = odata_get_all($rulesUrl, $auth);
 
 $hasRulesForTs = [];
-foreach ($rules as $r) {
+$tsToProject = []; // Time_Sheet_No -> Job_No (handig voor later)
+foreach ($rules as $k => $r) {
   $tsNo = (string) ($r['Time_Sheet_No'] ?? '');
-  if ($tsNo !== '')
+  $jno = (string) ($r['Job_No'] ?? '');
+
+  if (!in_array($jno, $projectNos)) {
+    unset($rules[$k]);
+    continue;
+  }
+  if ($tsNo !== '') {
     $hasRulesForTs[$tsNo] = true;
+    if ($jno !== '' && !isset($tsToProject[$tsNo]))
+      $tsToProject[$tsNo] = $jno;
+  }
 }
 
 // 3) Filter urenstaten zonder regels weg
@@ -35,17 +64,19 @@ foreach ($timesheets as $t) {
   $desc = $t['Description'] ?? '';
   if (preg_match('/\bWeek\s*(\d+)\b/i', $desc, $m)) {
     $w = (int) $m[1];
+    $tsNo = (string) ($t['No'] ?? '');
     $items[] = [
       'week' => $w,
-      'tsNo' => $t['No'],
+      'tsNo' => $tsNo,
       'start' => $t['Starting_Date'] ?? null,
       'end' => $t['Ending_Date'] ?? null,
       'desc' => $desc,
+      'projectNo' => (string) ($tsToProject[$tsNo] ?? ''),
     ];
   }
 }
 
-usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
+usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'], $b['projectNo']));
 ?>
 <!doctype html>
 <html lang="nl">
@@ -54,15 +85,15 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Weekselectie</title>
-
+  <!-- je kunt hier exact dezelfde CSS houden als je huidige weekselectie -->
   <style>
     :root {
       --bg: #f6f7fb;
-      --card: #ffffff;
+      --card: #fff;
       --text: #0f172a;
       --muted: #64748b;
       --border: #e2e8f0;
-      --shadow: 0 10px 30px rgba(2, 6, 23, 0.08);
+      --shadow: 0 10px 30px rgba(2, 6, 23, .08);
       --radius: 16px;
     }
 
@@ -114,7 +145,7 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
     h1 {
       margin: 0 0 6px;
       font-size: 22px;
-      letter-spacing: 0.2px;
+      letter-spacing: .2px;
     }
 
     .subtitle {
@@ -135,7 +166,7 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
     .search {
       width: 100%;
       min-height: 44px;
-      padding: 12px 12px;
+      padding: 12px;
       border-radius: 12px;
       border: 1px solid var(--border);
       font-size: 14px;
@@ -144,7 +175,7 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
 
     .search:focus {
       border-color: #818cf8;
-      box-shadow: 0 0 0 4px rgba(129, 140, 248, 0.25);
+      box-shadow: 0 0 0 4px rgba(129, 140, 248, .25);
     }
 
     .btn {
@@ -157,12 +188,11 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
       color: var(--text);
       background: #fff;
       cursor: pointer;
-      transition: transform 0.05s ease, filter 0.15s ease;
       white-space: nowrap;
     }
 
     .btn:hover {
-      filter: brightness(0.98);
+      filter: brightness(.98);
     }
 
     .btn:active {
@@ -173,7 +203,7 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
       border: 0;
       color: #fff;
       background: linear-gradient(180deg, #4f46e5 0%, #4338ca 100%);
-      box-shadow: 0 10px 20px rgba(79, 70, 229, 0.2);
+      box-shadow: 0 10px 20px rgba(79, 70, 229, .2);
     }
 
     .list {
@@ -181,7 +211,6 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
       border-radius: 14px;
       padding: 10px;
       max-height: 420px;
-      /* belangrijk bij veel weken */
       overflow: auto;
       background: #fff;
     }
@@ -190,7 +219,7 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
       display: flex;
       gap: 10px;
       align-items: flex-start;
-      padding: 10px 10px;
+      padding: 10px;
       border-radius: 12px;
       cursor: pointer;
     }
@@ -232,7 +261,7 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
       font-size: 13px;
     }
 
-    @media (max-width: 620px) {
+    @media (max-width:620px) {
       .card {
         padding: 18px;
       }
@@ -262,42 +291,42 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
 <body>
   <div class="page">
     <div class="card">
-      <div class="logo-wrap">
-        <img class="logo" src="images/kvtlogo_full.png" alt="Logo">
-      </div>
+      <div class="logo-wrap"><img class="logo" src="images/kvtlogo_full.png" alt="Logo"></div>
 
       <h1>Weekselectie</h1>
       <p class="subtitle">
-        Project: <b><?= htmlspecialchars($projectNo) ?></b><br>
+        Geselecteerde projecten: <b><?= htmlspecialchars((string) count($projectNos)) ?></b><br>
         Vink één of meerdere weken aan.
       </p>
 
       <form method="get" action="pdf.php" onsubmit="return validateWeeks()">
-        <input type="hidden" name="projectNo" value="<?= htmlspecialchars($projectNo) ?>">
+        <?php foreach ($projectNos as $pno): ?>
+          <input type="hidden" name="projectNo[]" value="<?= htmlspecialchars($pno) ?>">
+        <?php endforeach; ?>
 
         <div class="toolbar">
-          <input class="search" id="weekSearch" type="text"
-            placeholder="Zoek op weeknummer of datum (bijv. 51 of 2025-12)…" oninput="filterWeeks()">
-
+          <input class="search" id="weekSearch" type="text" placeholder="Zoek op weeknummer, datum of project…"
+            oninput="filterWeeks()">
           <button class="btn" type="button" onclick="toggleAll(true)">Alles</button>
           <button class="btn" type="button" onclick="toggleAll(false)">Geen</button>
         </div>
 
         <div class="list" id="weekList">
           <?php if (count($items) === 0): ?>
-            <div class="hint">Geen weken gevonden voor dit project.</div>
+            <div class="hint">Geen weken gevonden voor de geselecteerde projecten.</div>
           <?php endif; ?>
 
           <?php foreach ($items as $it): ?>
             <?php
             $label = "Week " . (int) $it['week'];
             $sub = trim((string) ($it['start'] ?? '')) . " – " . trim((string) ($it['end'] ?? ''));
-            $searchBlob = strtolower($label . " " . $sub . " " . ($it['desc'] ?? '') . " " . ($it['tsNo'] ?? ''));
+            $proj = (string) ($it['projectNo'] . "" ?? '');
+            $searchBlob = strtolower($label . " " . $sub . " " . $proj . " " . ($it['desc'] ?? '') . " " . ($it['tsNo'] ?? ''));
             ?>
             <label class="item" data-search="<?= htmlspecialchars($searchBlob) ?>">
               <input type="checkbox" name="tsNo[]" value="<?= htmlspecialchars($it['tsNo']) ?>">
               <div>
-                <div class="item-title"><?= htmlspecialchars($label) ?></div>
+                <div class="item-title"><?= htmlspecialchars($label) ?> · <?= htmlspecialchars($proj) ?></div>
                 <div class="item-sub">(<?= htmlspecialchars($sub) ?>)</div>
               </div>
             </label>
@@ -318,18 +347,12 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
       document.querySelectorAll('input[type="checkbox"][name="tsNo[]"]').forEach(cb => cb.checked = on);
       updateCount();
     }
-
     function validateWeeks ()
     {
       const any = [...document.querySelectorAll('input[name="tsNo[]"]')].some(x => x.checked);
-      if (!any)
-      {
-        alert("Selecteer minstens één week.");
-        return false;
-      }
+      if (!any) { alert("Selecteer minstens één week."); return false; }
       return true;
     }
-
     function filterWeeks ()
     {
       const q = (document.getElementById('weekSearch').value || '').trim().toLowerCase();
@@ -340,27 +363,17 @@ usort($items, fn($a, $b) => $a['week'] <=> $b['week']);
       });
       updateCount();
     }
-
     function updateCount ()
     {
       const boxes = [...document.querySelectorAll('input[name="tsNo[]"]')];
       const checked = boxes.filter(b => b.checked).length;
-
-      // zichtbare items tellen
-      const visible = [...document.querySelectorAll('#weekList .item')]
-        .filter(el => el.style.display !== 'none').length;
-
-      const hint = document.getElementById('countHint');
-      if (!hint) return;
-
-      hint.textContent = `${checked} geselecteerd · ${visible} zichtbaar`;
+      const visible = [...document.querySelectorAll('#weekList .item')].filter(el => el.style.display !== 'none').length;
+      document.getElementById('countHint').textContent = `${checked} geselecteerd · ${visible} zichtbaar`;
     }
-
     document.addEventListener('change', (e) =>
     {
       if (e.target && e.target.matches('input[name="tsNo[]"]')) updateCount();
     });
-
     updateCount();
   </script>
 </body>

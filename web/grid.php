@@ -7,73 +7,82 @@ function dow_nl_index(string $dateYmd): int
     return $w - 1;
 }
 
-function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo): array
+function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, array $allowedProjects, array $timesheets): array
 {
-    $people = [];
-    $dayTotals = array_fill(0, 7, 0.0); // Ma..Zo
+    $peopleByKey = [];
 
-    $i = 0;
     foreach ($lines as $line) {
-        if ($line['Work_Type_Code'] == "KM") {
+        if (($line['Work_Type_Code'] ?? '') === "KM")
             continue;
+
+        if (in_array($line['Job_No'], $allowedProjects)) {
+            $resourceNo = (string) ($line['Header_Resource_No'] ?? '');
+            $timesheetNo = (string) ($line['Time_Sheet_No'] ?? '');
+            $key = $resourceNo . '-' . $timesheetNo . "-" . $line['Job_No'];
+
+            $res = $resourcesByNo[$resourceNo] ?? [];
+            $bsn = $res['Social_Security_No'] ?? '';
+            $name = $res['Name'] ?? $resourceNo;
+
+            $dayTotals[$line['Job_No']] = array_fill(0, 7, 0.0);
+
+            $days = [];
+            for ($i = 1; $i <= 7; $i++) {
+                $days[$i - 1] = (float) ($line["Field{$i}"] ?? 0);
+            }
+
+            $timesheet = array_find($timesheets, function ($val) use ($timesheetNo) {
+                return $val['No'] == $timesheetNo;
+            });
+
+            if (!isset($peopleByKey[$key])) {
+                $peopleByKey[$key] = [
+                    'project' => $line['Job_No'],
+                    'startDate' => $timesheet['Starting_Date'],
+                    'endDate' => $timesheet['Ending_Date'],
+                    'key' => $key,
+                    'bsn' => $bsn,
+                    'name' => $name,
+                    'week' => (int) substr((string) ($line['Week'] ?? ''), 4, 5),
+                    'days' => array_fill(0, 7, 0.0),
+                    'total' => 0.0,
+                ];
+            }
+
+            for ($d = 0; $d < 7; $d++) {
+                $peopleByKey[$key]['days'][$d] += $days[$d];
+                $dayTotals[$line['Job_No']][$d] += $days[$d];
+            }
+
+            $peopleByKey[$key]['total'] += array_sum($days);
         }
-        $i++;
-        $resourceNo = (string) ($line['Header_Resource_No'] ?? '');
-
-        // Resource lookup
-        $res = $resourcesByNo[$resourceNo] ?? null;
-
-        $bsn = $res['Social_Security_No'] ?? '';
-        $name = $res['Name'] ?? $resourceNo;
-
-        // Field1..Field7 = Ma..Zo
-        $days = [];
-        for ($i = 1; $i <= 7; $i++) {
-            $days[$i - 1] = (float) ($line["Field{$i}"] ?? 0);
-        }
-
-        // Init werknemer
-        $person = [
-            'bsn' => $bsn,
-            'name' => $name,
-            'week' => substr((string) ($line['Week'] ?? ''), 4, 5),
-            'days' => array_fill(0, 7, 0.0),
-            'total' => 0.0,
-            'workType' => $line['Work_Type_Code'] ?? '', //test
-        ];
-
-        // Optellen
-        for ($d = 0; $d < 7; $d++) {
-            $person['days'][$d] += $days[$d];
-            $dayTotals[$d] += $days[$d];
-        }
-
-        $person['total'] += array_sum($days);
-
-        array_push($people, $person);
-
-        usort($people, function ($a, $b) {
-            $cmp = $a['week'] <=> $b['week'];
-            if ($cmp !== 0) return $cmp;
-
-            return strcmp($a['name'], $b['name']);
-        });
-
-
     }
 
-    // Ma–Vr totaal
-    $monFri = 0.0;
-    for ($i = 0; $i < 5; $i++) {
-        $monFri += $dayTotals[$i];
+    // Maak er nu een lijst van om te sorteren (keys hoeven niet mee)
+    $people = array_values($peopleByKey);
+
+    usort($people, function ($a, $b) {
+        $cmp = $b['week'] <=> $a['week'];
+        return $cmp;
+    });
+
+    $byProject = [];
+
+    foreach ($people as $person) {
+        if (!isset($byProject[$person['project']]))
+            $byProject[$person['project']] = [
+                'projectNo' => $person['project'],
+                'people' => [$person],
+                'totals' => [
+                    'days' => $dayTotals,
+                    'all' => array_sum($dayTotals),
+                ],
+            ];
+        else
+            array_push($byProject[$person['project']]['people'], $person);
     }
 
     return [
-        'people' => $people,
-        'totals' => [
-            'days' => $dayTotals,
-            'mon_fri' => $monFri,
-            'all' => array_sum($dayTotals),
-        ],
+        'projects' => $byProject,
     ];
 }
