@@ -28,6 +28,19 @@ function fmtHours($n): string
     return str_replace('.', ',', rtrim(rtrim(number_format($f, 2, '.', ''), '0'), '.'));
 }
 
+if (\PHP_VERSION_ID >= 80000) {
+    function array_find(array $array, callable $callback): mixed
+    {
+        foreach ($array as $key => $value) {
+            if ($callback($value, $key)) {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+}
+
 $tsNos = $_GET['tsNo'] ?? '';
 
 // ---- 1) Project ophalen
@@ -122,16 +135,17 @@ foreach ($grid['projects'] as $gridProject) {
     $startDate = "onbekend";
     $endDate = "onbekend";
 
-    $wL = 999;
+    $wL = 999999999999999999;
     $wH = -1;
     foreach ($gridProject['people'] as $person) {
-        if ($person['week'] > $wH) {
-            $wH = $person['week'];
+        $week = $person['week'] + (52 * $person['sortYear']);
+        if ($week > $wH) {
+            $wH = $week;
             $endDate = $person['endDate'];
         }
 
-        if ($person['week'] < $wL) {
-            $wL = $person['week'];
+        if ($week < $wL) {
+            $wL = $week;
             $startDate = $person['startDate'];
         }
     }

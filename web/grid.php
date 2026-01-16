@@ -114,5 +114,6 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
 
     return [
         'projects' => $byProject,
+        'multiYear' => false
     ];
 }

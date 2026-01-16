@@ -25,9 +25,6 @@ $week = (int) ($weekInfo['week'] ?? 0);
 $start = $weekInfo['start'] ?? null;
 $end = $weekInfo['end'] ?? null;
 
-// people sorteer op naam (stabiel)
-$people = $grid['people'] ?? [];
-
 $totals = $grid['totals'] ?? ['days' => array_fill(0, 7, 0.0), 'all' => 0.0];
 
 $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
@@ -270,6 +267,10 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
       border-bottom: 1px solid black;
 
     }
+
+    .subtle {
+      color: #888;
+    }
   </style>
 
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -444,7 +445,9 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
         <tr>
           <td><?= h($bsn) ?></td>
           <td class="name"><?= h($name) ?></td>
-          <td class="num"><?= ($grid['multiYear'] ? "(" . h($p['sortYear']) . ") " : "") . h($week) ?></td>
+          <td class="num"><span
+              class="subtle"><?= ($gridProject['multiYear'] ? "(" . h($p['sortYear']) . ") " : "") . '</span><b>' . h($week) ?></b>
+          </td>
           <?php for ($i = 0; $i < 7; $i++): ?>
             <td class="num"><?= h(fmtHours($days[$i] ?? 0)) ?></td>
           <?php endfor; ?>
