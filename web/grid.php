@@ -11,7 +11,7 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
 {
     $peopleByKey = [];
     $pYear = -1;
-
+    $dayTotals = [];
     foreach ($lines as $line) {
         if (($line['Work_Type_Code'] ?? '') === "KM")
             continue;

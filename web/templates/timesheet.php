@@ -25,7 +25,14 @@ $week = (int) ($weekInfo['week'] ?? 0);
 $start = $weekInfo['start'] ?? null;
 $end = $weekInfo['end'] ?? null;
 
-$totals = $grid['totals'] ?? ['days' => array_fill(0, 7, 0.0), 'all' => 0.0];
+$totals = ['days' => array_fill(0, 7, 0.0), 'all' => 0.0];
+
+foreach ($gridProject['people'] as $p) {
+  for ($i = 0; $i < 7; $i++) {
+    $totals['days'][$i] += $p['days'][$i];
+    $totals['all'] += $p['days'][$i];
+  }
+}
 
 $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
 ?>
