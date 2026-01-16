@@ -444,7 +444,7 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
       <?php foreach ($gridProject['people'] as $p): ?>
         <?php
         $bsn = $p['bsn'] ?? '';
-        $name = $p['name'] . $p['project'] ?? '';
+        $name = $p['name'] ?? '';
         $week = $p['week'] ?? '';
         $days = $p['days'] ?? array_fill(0, 7, 0.0);
         $rowTotal = $p['total'] ?? 0.0;
