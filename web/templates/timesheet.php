@@ -444,7 +444,7 @@ $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
         <tr>
           <td><?= h($bsn) ?></td>
           <td class="name"><?= h($name) ?></td>
-          <td class="num"><?= h($week) ?></td>
+          <td class="num"><?= ($grid['multiYear'] ? "(" . h($p['sortYear']) . ") " : "") . h($week) ?></td>
           <?php for ($i = 0; $i < 7; $i++): ?>
             <td class="num"><?= h(fmtHours($days[$i] ?? 0)) ?></td>
           <?php endfor; ?>
