@@ -306,6 +306,12 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
         align-items: stretch;
       }
     }
+
+    .list hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 12px 6px;
+    }
   </style>
 
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -338,21 +344,21 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
         </div>
 
         <div class="list" id="weekList">
-  <?php if (count($items) === 0): ?>
+                  <?php if (count($items) === 0): ?>
             <div class="hint">Geen weken gevonden voor de geselecteerde projecten.</div>
           <?php endif; ?>
-        
+
           <?php $first = true; ?>
           <?php foreach ($groups as $year => $list): ?>
             <?php if (!$first): ?>
               <hr>
             <?php endif; ?>
             <?php $first = false; ?>
-        
+
             <div class="hint" style="font-weight:700; margin:6px 4px 10px;">
               <?= $year ? htmlspecialchars((string) $year) : "Onbekend jaar" ?>
             </div>
-        
+
             <?php foreach ($list as $it): ?>
               <?php
               $label = "Week " . (int) $it['week'];
