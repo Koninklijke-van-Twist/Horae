@@ -28,17 +28,6 @@ function fmtHours($n): string
     return str_replace('.', ',', rtrim(rtrim(number_format($f, 2, '.', ''), '0'), '.'));
 }
 
-function array_find(array $array, callable $callback): mixed
-{
-    foreach ($array as $key => $value) {
-        if ($callback($value, $key)) {
-            return $value;
-        }
-    }
-
-    return null;
-}
-
 $tsNos = $_GET['tsNo'] ?? '';
 
 // ---- 1) Project ophalen
