@@ -76,6 +76,32 @@ foreach ($timesheets as $t) {
   }
 }
 
+// Groepeer op jaar (uit einddatum) en sorteer per jaar week desc
+$groups = [];
+
+foreach ($items as $it) {
+  $end = (string) ($it['end'] ?? '');
+  $year = 0;
+
+  // verwacht YYYY-MM-DD
+  if (preg_match('/^(\d{4})-\d{2}-\d{2}$/', $end, $m)) {
+    $year = (int) $m[1];
+  } else {
+    $year = 0; // fallback
+  }
+
+  $groups[$year][] = $it;
+}
+
+// Jaar-groepen sorteren: 2026, 2025, ...
+krsort($groups);
+
+// Binnen elke groep: weeknummer hoog->laag
+foreach ($groups as $year => &$list) {
+  usort($list, fn($a, $b) => ((int) $b['week']) <=> ((int) $a['week']));
+}
+unset($list);
+
 usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'], $b['projectNo']));
 ?>
 <!doctype html>
@@ -312,26 +338,39 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
         </div>
 
         <div class="list" id="weekList">
-          <?php if (count($items) === 0): ?>
+  <?php if (count($items) === 0): ?>
             <div class="hint">Geen weken gevonden voor de geselecteerde projecten.</div>
           <?php endif; ?>
-
-          <?php foreach ($items as $it): ?>
-            <?php
-            $label = "Week " . (int) $it['week'];
-            $sub = trim((string) ($it['start'] ?? '')) . " – " . trim((string) ($it['end'] ?? ''));
-            $proj = (string) ($it['projectNo'] . "" ?? '');
-            $searchBlob = strtolower($label . " " . $sub . " " . $proj . " " . ($it['desc'] ?? '') . " " . ($it['tsNo'] ?? ''));
-            ?>
-            <label class="item" data-search="<?= htmlspecialchars($searchBlob) ?>">
-              <input type="checkbox" name="tsNo[]" value="<?= htmlspecialchars($it['tsNo']) ?>">
-              <div>
-                <div class="item-title"><?= htmlspecialchars($label) ?> · <?= htmlspecialchars($proj) ?></div>
-                <div class="item-sub">(<?= htmlspecialchars($sub) ?>)</div>
-              </div>
-            </label>
+        
+          <?php $first = true; ?>
+          <?php foreach ($groups as $year => $list): ?>
+            <?php if (!$first): ?>
+              <hr>
+            <?php endif; ?>
+            <?php $first = false; ?>
+        
+            <div class="hint" style="font-weight:700; margin:6px 4px 10px;">
+              <?= $year ? htmlspecialchars((string) $year) : "Onbekend jaar" ?>
+            </div>
+        
+            <?php foreach ($list as $it): ?>
+              <?php
+              $label = "Week " . (int) $it['week'];
+              $sub = trim((string) ($it['start'] ?? '')) . " – " . trim((string) ($it['end'] ?? ''));
+              $proj = (string) ($it['projectNo'] ?? '');
+              $searchBlob = strtolower($label . " " . $sub . " " . $proj . " " . ($it['desc'] ?? '') . " " . ($it['tsNo'] ?? ''));
+              ?>
+              <label class="item" data-search="<?= htmlspecialchars($searchBlob) ?>">
+                <input type="checkbox" name="tsNo[]" value="<?= htmlspecialchars($it['tsNo']) ?>">
+                <div>
+                  <div class="item-title"><?= htmlspecialchars($label) ?> · <?= htmlspecialchars($proj) ?></div>
+                  <div class="item-sub">(<?= htmlspecialchars($sub) ?>)</div>
+                </div>
+              </label>
+            <?php endforeach; ?>
           <?php endforeach; ?>
         </div>
+
 
         <div class="footer">
           <div class="hint" id="countHint"></div>
