@@ -7,8 +7,12 @@ $day = $hour * 24;
 
 // 1) Bepaal welke projecten regels hebben (distinct Job_No uit Urenstaatregels)
 $rulesUrl = $base . "Urenstaatregels?\$select=Job_No,Work_Type_Code&\$format=json&\$filter=Work_Type_Code%20ne%20'KM'";
-$rules = odata_get_all($rulesUrl, $auth, $day);
-
+try {
+  $rules = odata_get_all($rulesUrl, $auth, $day);
+} catch (Exception $e) {
+  echo "Er zijn nog geen urenstaten geregistreerd in Business Central omgeving '$environment'. Gebruik van deze applicatie is daardoor niet mogelijk.";
+  die;
+}
 $projectsWithRules = [];
 foreach ($rules as $r) {
   $jno = trim((string) ($r['Job_No'] ?? ''));
