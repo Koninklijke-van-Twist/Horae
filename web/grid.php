@@ -7,7 +7,7 @@ function dow_nl_index(string $dateYmd): int
     return $w - 1;
 }
 
-function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, array $allowedProjects, array $timesheets): array
+function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, array $employeesByNo, array $allowedProjects, array $timesheets): array
 {
     $peopleByKey = [];
     $pYear = -1;
@@ -22,7 +22,8 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
             $key = $resourceNo . '-' . $timesheetNo . "-" . $line['Job_No'];
 
             $res = $resourcesByNo[$resourceNo] ?? [];
-            $bsn = $res['Social_Security_No'] ?? '';
+            $emp = $employeesByNo[$resourceNo] ?? [];
+            $bsn = $emp['Social_Security_No'] ?? 'Onbekend';
             $name = $res['Name'] ?? $resourceNo;
 
             $dayTotals[$line['Job_No']] = array_fill(0, 7, 0.0);

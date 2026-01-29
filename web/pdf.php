@@ -119,8 +119,22 @@ if (count($neededNos) > 0) {
     }
 }
 
+$employeesByNo = [];
+if (count($neededNos) > 0) {
+    // OData filter met OR: No eq 'A' or No eq 'B' ...
+    // Let op: bij veel resources kan de URL lang worden; dan is "alles ophalen" beter.
+    $parts = array_map(fn($n) => "Resource_No eq '$n'", $neededNos);
+    $empFilter = rawurlencode(implode(" or ", $parts));
+    $empUrl = $baseApp . "Werknemer?\$select=No,Resource_No,Social_Security_No&\$filter={$resFilter}&\$format=json";
+    $empRows = odata_get_all($empUrl, $auth);
+
+    foreach ($empRows as $e) {
+        $employeesByNo[(string) $e['No']] = $e;
+    }
+}
+
 // ---- 5) Grid bouwen
-$grid = build_timesheet_grid_from_fields($lines, $resourcesByNo, $projectNos, $tsRows);
+$grid = build_timesheet_grid_from_fields($lines, $resourcesByNo, $employeesByNo, $projectNos, $tsRows);
 
 foreach ($grid['projects'] as $gridProject) {
 
