@@ -2,6 +2,7 @@
 require __DIR__ . "/odata.php";
 require __DIR__ . "/grid.php"; // waar build_timesheet_grid_from_fields staat
 require __DIR__ . "/auth.php";
+require __DIR__ . "/logincheck.php";
 
 function h($v): string
 {
@@ -26,6 +27,19 @@ function fmtHours($n): string
         return '';
     // maximaal 2 decimalen, met komma
     return str_replace('.', ',', rtrim(rtrim(number_format($f, 2, '.', ''), '0'), '.'));
+}
+
+if (\PHP_VERSION_ID >= 80000 && !function_exists("array_find")) {
+    function array_find(array $array, callable $callback): mixed
+    {
+        foreach ($array as $key => $value) {
+            if ($callback($value, $key)) {
+                return $value;
+            }
+        }
+
+        return null;
+    }
 }
 
 $tsNos = $_GET['tsNo'] ?? '';

@@ -1,6 +1,7 @@
 <?php
 require __DIR__ . "/odata.php"; // jouw curl helper (basic/ntlm)
 require __DIR__ . "/auth.php";
+require __DIR__ . "/logincheck.php";
 
 $service = "AppResource";
 $xmlStr = odata_get_raw("https://kvtmd365.kvt.nl:7148/$environment/ODataV4/\$metadata", $auth);

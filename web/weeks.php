@@ -1,6 +1,7 @@
 <?php
 require __DIR__ . "/odata.php";
 require __DIR__ . "/auth.php";
+require __DIR__ . "/logincheck.php";
 
 $projectNos = $_GET['projectNo'] ?? [];
 if (!is_array($projectNos))
