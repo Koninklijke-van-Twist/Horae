@@ -1,28 +1,23 @@
 <?php
 
-function odata_get_all(string $url, array $auth, $ttlSeconds = 3600): array
+function odata_get_all(string $url, array $auth, $ttlSeconds = 300): array
 {
     $cacheKey = build_cache_key($url, $auth);
     $cachePath = cache_path_for_key($cacheKey);
 
-    if (is_file($cachePath)) 
-    {
+    if (is_file($cachePath)) {
         $age = time() - filemtime($cachePath);
 
-        if ($age >= 0 && $age < $ttlSeconds) 
-        {
+        if ($age >= 0 && $age < $ttlSeconds) {
             $raw = file_get_contents($cachePath);
             $data = json_decode($raw, true);
 
-            if (is_array($data)) 
-            {
+            if (is_array($data)) {
                 return $data;
             }
 
             @unlink($cachePath);
-        } 
-        else 
-        {
+        } else {
             @unlink($cachePath);
         }
     }
@@ -33,8 +28,7 @@ function odata_get_all(string $url, array $auth, $ttlSeconds = 3600): array
     while ($next) {
         $resp = odata_get_json($next, $auth);
 
-        if (!isset($resp['value']) || !is_array($resp['value'])) 
-        {
+        if (!isset($resp['value']) || !is_array($resp['value'])) {
             throw new Exception("OData response missing 'value' array");
         }
 
@@ -94,7 +88,7 @@ function odata_get_json(string $url, array $auth): array
 function build_cache_key(string $url, array $auth): string
 {
     require __DIR__ . "/auth.php";
-    $user = (string)($auth['user'] ?? '');
+    $user = (string) ($auth['user'] ?? '');
     return $url . '|' . $user . '|' . $environment;
 }
 

@@ -27,6 +27,7 @@ $projects = odata_get_all($projUrl, $auth, $day);
 
 $projects = array_values(array_filter($projects, function ($p) use ($projectsWithRules) {
   $no = (string) ($p['No'] ?? '');
+  return true;
   return $no !== '' && isset($projectsWithRules[$no]);
 }));
 

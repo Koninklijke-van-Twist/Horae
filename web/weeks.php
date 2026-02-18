@@ -34,7 +34,13 @@ $rulesFilterDecoded = "(" . $rulesFilterDecoded . ") and Work_Type_Code ne 'KM'"
 $rulesFilter = rawurlencode($rulesFilterDecoded);
 
 $rulesUrl = $base . "Urenstaatregels?\$select=Time_Sheet_No,Job_No&\$filter={$rulesFilter}&\$format=json";
-$rules = odata_get_all($rulesUrl, $auth);
+$rules = [];
+
+try {
+  $rules = odata_get_all($rulesUrl, $auth);
+} catch (\Throwable $th) {
+  //throw $th;
+}
 
 $hasRulesForTs = [];
 $tsToProject = []; // Time_Sheet_No -> Job_No (handig voor later)
@@ -345,8 +351,8 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
         </div>
 
         <div class="list" id="weekList">
-                  <?php if (count($items) === 0): ?>
-            <div class="hint">Geen weken gevonden voor de geselecteerde projecten.</div>
+          <?php if (count($items) === 0): ?>
+            <div class="hint">Geen gegevens over weken gevonden voor de geselecteerde projecten.</div>
           <?php endif; ?>
 
           <?php $first = true; ?>
