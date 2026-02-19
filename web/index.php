@@ -4,12 +4,12 @@ require __DIR__ . "/auth.php";
 require __DIR__ . "/logincheck.php";
 
 $hour = 3600;
-$day = $hour * 24;
+$halfDay = $hour * 12;
 
 // 1) Bepaal welke projecten regels hebben (distinct Job_No uit Urenstaatregels)
 $rulesUrl = $base . "Urenstaatregels?\$select=Job_No,Work_Type_Code&\$format=json&\$filter=Work_Type_Code%20ne%20'KM'";
 try {
-  $rules = odata_get_all($rulesUrl, $auth, $day);
+  $rules = odata_get_all($rulesUrl, $auth, $halfDay);
 } catch (Exception $e) {
   echo "Er zijn nog geen urenstaten geregistreerd in Business Central omgeving '$environment'. Gebruik van deze applicatie is daardoor niet mogelijk.";
   die;
@@ -23,7 +23,7 @@ foreach ($rules as $r) {
 
 // 2) Haal alle projecten op en filter lokaal
 $projUrl = $base . "AppProjecten?\$select=No,Description&\$format=json";
-$projects = odata_get_all($projUrl, $auth, $day);
+$projects = odata_get_all($projUrl, $auth, $halfDay);
 
 $projects = array_values(array_filter($projects, function ($p) use ($projectsWithRules) {
   $no = (string) ($p['No'] ?? '');
@@ -244,6 +244,11 @@ usort($projects, fn($a, $b) => strcmp((string) $a['No'], (string) $b['No']));
 </head>
 
 <body>
+  <?= injectTimerHtml([
+    'statusUrl' => 'odata.php?action=cache_status',
+    'title' => 'Cachebestanden',
+    'label' => 'Cache',
+  ]) ?>
   <div class="page">
     <div class="card">
       <div class="logo-wrap">
