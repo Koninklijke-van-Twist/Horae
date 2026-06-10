@@ -1321,6 +1321,175 @@ function injectTimerHtml(array $options = []): string
 HTML;
 }
 
+function odata_get_page(string $url, array $auth, int $skip, int $top): array
+{
+    $separator = str_contains($url, '?') ? '&' : '?';
+    $pageUrl = $url . $separator . '$skip=' . max(0, $skip) . '&$top=' . max(1, $top);
+    $resp = odata_get_json($pageUrl, $auth);
+
+    if (!isset($resp['value']) || !is_array($resp['value'])) {
+        throw new Exception("OData response missing 'value' array");
+    }
+
+    return [
+        'rows' => $resp['value'],
+        'nextLink' => $resp['@odata.nextLink'] ?? null,
+    ];
+}
+
+function projects_build_cache_path(string $cacheKey): string
+{
+    return cache_base_dir() . '/projects_build_' . hash('sha256', $cacheKey) . '.json';
+}
+
+function projects_read_build_state(string $path): array
+{
+    if (!is_file($path)) {
+        return ['rows' => [], 'complete' => false];
+    }
+
+    $raw = @file_get_contents($path);
+    if ($raw === false || $raw === '') {
+        return ['rows' => [], 'complete' => false];
+    }
+
+    $payload = json_decode($raw, true);
+    if (!is_array($payload)) {
+        return ['rows' => [], 'complete' => false];
+    }
+
+    $rows = $payload['data'] ?? $payload['rows'] ?? [];
+    if (!is_array($rows)) {
+        $rows = [];
+    }
+
+    return [
+        'rows' => $rows,
+        'complete' => !empty($payload['_meta']['complete']),
+    ];
+}
+
+function projects_write_build_state(string $path, array $rows, bool $complete, string $sourceUrl = ''): void
+{
+    $tmp = $path . '.tmp';
+    $payload = [
+        '_meta' => [
+            'complete' => $complete,
+            'updated_at' => time(),
+            'source_url' => $sourceUrl,
+            'count' => count($rows),
+        ],
+        'data' => $rows,
+    ];
+
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        throw new Exception('Failed to encode projects build cache');
+    }
+
+    file_put_contents($tmp, $json, LOCK_EX);
+    rename($tmp, $path);
+}
+
+function projects_ensure_rows(string $projUrl, array $auth, string $cacheKey, int $neededCount, int $pageSize, int $ttlSeconds): array
+{
+    $buildPath = projects_build_cache_path($cacheKey);
+    $state = projects_read_build_state($buildPath);
+    $rows = $state['rows'];
+    $complete = $state['complete'];
+
+    while (!$complete && count($rows) < $neededCount) {
+        $page = odata_get_page($projUrl, $auth, count($rows), $pageSize);
+        $pageRows = $page['rows'];
+
+        if (count($pageRows) === 0) {
+            $complete = true;
+            break;
+        }
+
+        $rows = array_merge($rows, $pageRows);
+        $complete = count($pageRows) < $pageSize;
+        projects_write_build_state($buildPath, $rows, $complete, $projUrl);
+    }
+
+    if ($complete && count($rows) > 0) {
+        write_cache_json(cache_path_for_key($cacheKey), $rows, $ttlSeconds, $projUrl);
+    }
+
+    return [
+        'rows' => $rows,
+        'complete' => $complete || count($rows) >= $neededCount,
+    ];
+}
+
+function odata_send_projects_batch_json(): void
+{
+    require __DIR__ . '/auth.php';
+
+    if (function_exists('xdebug_disable')) {
+        xdebug_disable();
+    }
+
+    @set_time_limit(120);
+
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+
+    $skip = max(0, (int) ($_GET['skip'] ?? 0));
+    $top = max(1, min(500, (int) ($_GET['top'] ?? 200)));
+    $halfDay = 3600 * 12;
+
+    try {
+        $projUrl = $base . "AppProjecten?\$select=No,Description&\$orderby=No&\$format=json";
+        $cacheKey = build_cache_key($projUrl, $auth);
+        $cachePath = cache_path_for_key($cacheKey);
+        $cached = is_file($cachePath) ? read_cache_payload($cachePath, $halfDay) : ['valid' => false, 'data' => []];
+
+        if ($cached['valid']) {
+            $all = $cached['data'];
+            $slice = array_slice($all, $skip, $top);
+            echo json_encode([
+                'ok' => true,
+                'rows' => $slice,
+                'skip' => $skip,
+                'top' => $top,
+                'loaded' => $skip + count($slice),
+                'total' => count($all),
+                'done' => ($skip + count($slice)) >= count($all),
+                'cached' => true,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            exit;
+        }
+
+        $neededCount = $skip + $top;
+        $build = projects_ensure_rows($projUrl, $auth, $cacheKey, $neededCount, $top, $halfDay);
+        $allRows = $build['rows'];
+        $slice = array_slice($allRows, $skip, $top);
+        $loaded = $skip + count($slice);
+        $complete = !empty($build['complete']);
+        $total = $complete ? count($allRows) : null;
+        $done = $complete && $loaded >= count($allRows);
+
+        echo json_encode([
+            'ok' => true,
+            'rows' => $slice,
+            'skip' => $skip,
+            'top' => $top,
+            'loaded' => $loaded,
+            'total' => $total,
+            'done' => $done,
+            'cached' => false,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode([
+            'ok' => false,
+            'error' => $e->getMessage(),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+    exit;
+}
+
 $odataAction = (string) ($_GET['action'] ?? '');
 if (odata_is_direct_request() && $odataAction === 'cache_status') {
     odata_send_cache_status_json();
@@ -1330,4 +1499,11 @@ if (odata_is_direct_request() && $odataAction === 'cache_delete') {
 }
 if (odata_is_direct_request() && $odataAction === 'cache_clear') {
     odata_send_cache_clear_json();
+}
+if (odata_is_direct_request() && $odataAction === 'projects_batch') {
+    odata_send_projects_batch_json();
+}
+if (odata_is_direct_request() && in_array($odataAction, ['override_get', 'override_save', 'override_create_week', 'override_delete_week', 'override_row_add', 'override_row_delete', 'override_row_restore'], true)) {
+    require __DIR__ . '/overrides.php';
+    overrides_handle_api($odataAction);
 }

@@ -1,5 +1,6 @@
 <?php
 require __DIR__ . "/odata.php";
+require __DIR__ . "/overrides.php";
 require __DIR__ . "/auth.php";
 require __DIR__ . "/logincheck.php";
 
@@ -72,29 +73,47 @@ foreach ($timesheets as $t) {
   if (preg_match('/\bWeek\s*(\d+)\b/i', $desc, $m)) {
     $w = (int) $m[1];
     $tsNo = (string) ($t['No'] ?? '');
+    $end = (string) ($t['Ending_Date'] ?? '');
+    $year = 0;
+    if (preg_match('/^(\d{4})-\d{2}-\d{2}$/', $end, $m)) {
+      $year = (int) $m[1];
+    }
     $items[] = [
       'week' => $w,
+      'year' => $year,
       'tsNo' => $tsNo,
       'start' => $t['Starting_Date'] ?? null,
-      'end' => $t['Ending_Date'] ?? null,
+      'end' => $end,
       'desc' => $desc,
       'projectNo' => (string) ($tsToProject[$tsNo] ?? ''),
     ];
   }
 }
 
+$overrideItems = overrides_list_for_projects($projectNos);
+$existingKeys = [];
+foreach ($items as $it) {
+  $existingKeys[(string) ($it['projectNo'] ?? '') . '|' . (int) ($it['year'] ?? 0) . '|' . (int) ($it['week'] ?? 0)] = true;
+}
+
+foreach ($overrideItems as $overrideItem) {
+  $key = (string) ($overrideItem['projectNo'] ?? '') . '|' . (int) ($overrideItem['year'] ?? 0) . '|' . (int) ($overrideItem['week'] ?? 0);
+  if (isset($existingKeys[$key])) {
+    continue;
+  }
+  $items[] = $overrideItem;
+}
+
 // Groepeer op jaar (uit einddatum) en sorteer per jaar week desc
 $groups = [];
 
 foreach ($items as $it) {
-  $end = (string) ($it['end'] ?? '');
-  $year = 0;
-
-  // verwacht YYYY-MM-DD
-  if (preg_match('/^(\d{4})-\d{2}-\d{2}$/', $end, $m)) {
-    $year = (int) $m[1];
-  } else {
-    $year = 0; // fallback
+  $year = (int) ($it['year'] ?? 0);
+  if ($year === 0) {
+    $end = (string) ($it['end'] ?? '');
+    if (preg_match('/^(\d{4})-\d{2}-\d{2}$/', $end, $m)) {
+      $year = (int) $m[1];
+    }
   }
 
   $groups[$year][] = $it;
@@ -190,7 +209,7 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
 
     .toolbar {
       display: grid;
-      grid-template-columns: 1fr auto auto;
+      grid-template-columns: 1fr repeat(3, auto);
       gap: 10px;
       align-items: center;
       margin: 14px 0 12px;
@@ -319,6 +338,98 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
       border-top: 1px solid var(--border);
       margin: 12px 6px;
     }
+
+    .badge-horae {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: #fff7ed;
+      color: #c2410c;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .progress-wrap {
+      margin: 0 0 14px;
+      display: none;
+    }
+
+    .progress-wrap.active {
+      display: block;
+    }
+
+    .progress-bar {
+      height: 10px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #4f46e5, #818cf8);
+      transition: width 200ms ease;
+    }
+
+    .progress-label {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 40;
+      padding: 20px;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal-card {
+      width: min(420px, 100%);
+      background: #fff;
+      border-radius: 16px;
+      padding: 22px;
+      box-shadow: var(--shadow);
+    }
+
+    .modal-card h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .modal-card p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .modal-card input,
+    .modal-card select {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
   </style>
 
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -348,6 +459,7 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
             oninput="filterWeeks()">
           <button class="btn" type="button" onclick="toggleAll(true)">Alles</button>
           <button class="btn" type="button" onclick="toggleAll(false)">Geen</button>
+          <button class="btn" type="button" onclick="openNewWeekModal()">Nieuwe week</button>
         </div>
 
         <div class="list" id="weekList">
@@ -371,12 +483,13 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
               $label = "Week " . (int) $it['week'];
               $sub = trim((string) ($it['start'] ?? '')) . " – " . trim((string) ($it['end'] ?? ''));
               $proj = (string) ($it['projectNo'] ?? '');
-              $searchBlob = strtolower($label . " " . $sub . " " . $proj . " " . ($it['desc'] ?? '') . " " . ($it['tsNo'] ?? ''));
+              $isHoraeOnly = !empty($it['isOverrideOnly']);
+              $searchBlob = strtolower($label . " " . $sub . " " . $proj . " " . ($it['desc'] ?? '') . " " . ($it['tsNo'] ?? '') . " horae");
               ?>
               <label class="item" data-search="<?= htmlspecialchars($searchBlob) ?>">
                 <input type="checkbox" name="tsNo[]" value="<?= htmlspecialchars($it['tsNo']) ?>">
                 <div>
-                  <div class="item-title"><?= htmlspecialchars($label) ?> · <?= htmlspecialchars($proj) ?></div>
+                  <div class="item-title"><?= htmlspecialchars($label) ?> · <?= htmlspecialchars($proj) ?><?php if ($isHoraeOnly): ?><span class="badge-horae">Horae</span><?php endif; ?></div>
                   <div class="item-sub">(<?= htmlspecialchars($sub) ?>)</div>
                 </div>
               </label>
@@ -393,7 +506,30 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
     </div>
   </div>
 
+  <div class="modal-backdrop" id="newWeekModal" aria-hidden="true">
+    <div class="modal-card">
+      <h2>Nieuwe week toevoegen</h2>
+      <p>Maak een Horae-rapport aan voor een week die (nog) niet in BC staat.</p>
+      <?php if (count($projectNos) > 1): ?>
+        <select id="newWeekProject">
+          <?php foreach ($projectNos as $pno): ?>
+            <option value="<?= htmlspecialchars($pno) ?>"><?= htmlspecialchars($pno) ?></option>
+          <?php endforeach; ?>
+        </select>
+      <?php else: ?>
+        <input type="hidden" id="newWeekProject" value="<?= htmlspecialchars($projectNos[0] ?? '') ?>">
+      <?php endif; ?>
+      <input type="number" id="newWeekYear" min="2000" max="2100" placeholder="Jaar (bijv. <?= (int) date('Y') ?>)" value="<?= (int) date('Y') ?>">
+      <input type="number" id="newWeekNumber" min="1" max="53" placeholder="Weeknummer (1-53)">
+      <div class="modal-actions">
+        <button class="btn" type="button" onclick="closeNewWeekModal()">Annuleren</button>
+        <button class="btn-primary btn" type="button" onclick="createNewWeek()">Aanmaken</button>
+      </div>
+    </div>
+  </div>
+
   <script>
+    const selectedProjects = <?= json_encode(array_values($projectNos), JSON_UNESCAPED_UNICODE) ?>;
     function toggleAll (on)
     {
       document.querySelectorAll('input[type="checkbox"][name="tsNo[]"]').forEach(cb => cb.checked = on);
@@ -427,6 +563,42 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
       if (e.target && e.target.matches('input[name="tsNo[]"]')) updateCount();
     });
     updateCount();
+
+    function openNewWeekModal ()
+    {
+      document.getElementById('newWeekModal').classList.add('open');
+      document.getElementById('newWeekModal').setAttribute('aria-hidden', 'false');
+      document.getElementById('newWeekNumber').focus();
+    }
+    function closeNewWeekModal ()
+    {
+      document.getElementById('newWeekModal').classList.remove('open');
+      document.getElementById('newWeekModal').setAttribute('aria-hidden', 'true');
+    }
+    async function createNewWeek ()
+    {
+      const projectNo = (document.getElementById('newWeekProject').value || '').trim();
+      const year = Number(document.getElementById('newWeekYear').value || 0);
+      const weekNo = Number(document.getElementById('newWeekNumber').value || 0);
+      if (!projectNo) { alert('Kies een project.'); return; }
+      if (!Number.isInteger(year) || year < 2000 || year > 2100) { alert('Voer een geldig jaar in (2000-2100).'); return; }
+      if (!Number.isInteger(weekNo) || weekNo < 1 || weekNo > 53) { alert('Voer een geldig weeknummer in (1-53).'); return; }
+
+      const response = await fetch('odata.php?action=override_create_week', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ projectNo, weekNo, year })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok)
+      {
+        alert((payload && payload.error) || 'Week aanmaken mislukt.');
+        return;
+      }
+
+      window.location.reload();
+    }
   </script>
 </body>
 

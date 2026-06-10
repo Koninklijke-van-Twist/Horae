@@ -2,36 +2,6 @@
 require __DIR__ . "/odata.php";
 require __DIR__ . "/auth.php";
 require __DIR__ . "/logincheck.php";
-
-$hour = 3600;
-$halfDay = $hour * 12;
-
-// 1) Bepaal welke projecten regels hebben (distinct Job_No uit Urenstaatregels)
-$rulesUrl = $base . "Urenstaatregels?\$select=Job_No,Work_Type_Code&\$format=json&\$filter=Work_Type_Code%20ne%20'KM'";
-try {
-  $rules = odata_get_all($rulesUrl, $auth, $halfDay);
-} catch (Exception $e) {
-  echo "Er zijn nog geen urenstaten geregistreerd in Business Central omgeving '$environment'. Gebruik van deze applicatie is daardoor niet mogelijk.";
-  die;
-}
-$projectsWithRules = [];
-foreach ($rules as $r) {
-  $jno = trim((string) ($r['Job_No'] ?? ''));
-  if ($jno !== '')
-    $projectsWithRules[$jno] = true;
-}
-
-// 2) Haal alle projecten op en filter lokaal
-$projUrl = $base . "AppProjecten?\$select=No,Description&\$format=json";
-$projects = odata_get_all($projUrl, $auth, $halfDay);
-
-$projects = array_values(array_filter($projects, function ($p) use ($projectsWithRules) {
-  $no = (string) ($p['No'] ?? '');
-  return true;
-  return $no !== '' && isset($projectsWithRules[$no]);
-}));
-
-usort($projects, fn($a, $b) => strcmp((string) $a['No'], (string) $b['No']));
 ?>
 <!doctype html>
 <html lang="nl">
@@ -161,6 +131,12 @@ usort($projects, fn($a, $b) => strcmp((string) $a['No'], (string) $b['No']));
       box-shadow: 0 10px 20px rgba(79, 70, 229, .2);
     }
 
+    .btn:disabled,
+    .btn-primary:disabled {
+      opacity: 0.55;
+      cursor: default;
+    }
+
     .list {
       border: 1px solid var(--border);
       border-radius: 14px;
@@ -216,6 +192,41 @@ usort($projects, fn($a, $b) => strcmp((string) $a['No'], (string) $b['No']));
       font-size: 13px;
     }
 
+    .progress-wrap {
+      margin: 0 0 14px;
+    }
+
+    .progress-bar {
+      height: 10px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #4f46e5, #818cf8);
+      transition: width 200ms ease;
+    }
+
+    .progress-bar-fill.indeterminate {
+      width: 35% !important;
+      animation: progress-indeterminate 1.2s ease-in-out infinite;
+    }
+
+    @keyframes progress-indeterminate {
+      0% { margin-left: 0%; }
+      50% { margin-left: 65%; }
+      100% { margin-left: 0%; }
+    }
+
+    .progress-label {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
     @media (max-width:620px) {
       .card {
         padding: 18px;
@@ -258,44 +269,194 @@ usort($projects, fn($a, $b) => strcmp((string) $a['No'], (string) $b['No']));
       <h1>Projectselectie</h1>
       <p class="subtitle">Vink één of meerdere projecten aan om beschikbare weken te bekijken.</p>
 
-      <form method="get" action="weeks.php" onsubmit="return validateProjects()">
+      <div class="progress-wrap" id="loadProgressWrap">
+        <div class="progress-bar">
+          <div class="progress-bar-fill" id="loadProgressFill"></div>
+        </div>
+        <div class="progress-label" id="loadProgressLabel">Projecten laden…</div>
+      </div>
+
+      <form method="get" action="weeks.php" onsubmit="return validateProjects()" id="projectForm">
         <div class="toolbar">
           <input class="search" id="projectSearch" type="text" placeholder="Zoek op projectnummer of omschrijving…"
-            oninput="filterProjects()">
-          <button class="btn" type="button" onclick="toggleAllProjects(true)">Alles</button>
-          <button class="btn" type="button" onclick="toggleAllProjects(false)">Geen</button>
+            oninput="filterProjects()" disabled>
+          <button class="btn" type="button" onclick="toggleAllProjects(true)" disabled id="btnAll">Alles</button>
+          <button class="btn" type="button" onclick="toggleAllProjects(false)" disabled id="btnNone">Geen</button>
         </div>
 
         <div class="list" id="projectList">
-          <?php if (count($projects) === 0): ?>
-            <div class="hint">Geen projecten gevonden.</div>
-          <?php endif; ?>
-
-          <?php foreach ($projects as $p): ?>
-            <?php
-            $no = (string) ($p['No'] ?? '');
-            $desc = (string) ($p['Description'] ?? '');
-            $searchBlob = strtolower($no . " " . $desc);
-            ?>
-            <label class="item" data-search="<?= htmlspecialchars($searchBlob) ?>">
-              <input type="checkbox" name="projectNo[]" value="<?= htmlspecialchars($no) ?>">
-              <div>
-                <div class="item-title"><?= htmlspecialchars($no) ?></div>
-                <div class="item-sub"><?= htmlspecialchars($desc) ?></div>
-              </div>
-            </label>
-          <?php endforeach; ?>
+          <div class="hint" id="projectLoadingHint">Projecten worden geladen…</div>
         </div>
 
         <div class="footer">
           <div class="hint" id="projCountHint"></div>
-          <button class="btn-primary" type="submit">Volgende</button>
+          <button class="btn-primary" type="submit" disabled id="btnNext">Volgende</button>
         </div>
       </form>
     </div>
   </div>
 
   <script>
+    const BATCH_SIZE = 200;
+    let allProjects = [];
+
+    function escapeHtml (value)
+    {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function setLoadingProgress (loaded, total, done, waiting)
+    {
+      const fill = document.getElementById('loadProgressFill');
+      const label = document.getElementById('loadProgressLabel');
+      fill.classList.toggle('indeterminate', !!waiting && loaded === 0);
+
+      let pct = 0;
+      if (total && total > 0)
+      {
+        pct = Math.min(100, Math.round((loaded / total) * 100));
+      }
+      else if (done)
+      {
+        pct = 100;
+      }
+      else if (loaded > 0)
+      {
+        pct = Math.min(95, Math.max(8, Math.round(loaded / 5)));
+      }
+      else if (waiting)
+      {
+        pct = 0;
+      }
+      else
+      {
+        pct = 8;
+      }
+
+      if (!waiting || loaded > 0)
+      {
+        fill.classList.remove('indeterminate');
+        fill.style.width = pct + '%';
+      }
+
+      if (done)
+      {
+        label.textContent = loaded + ' projecten geladen';
+      }
+      else if (waiting && loaded === 0)
+      {
+        label.textContent = 'Eerste batch ophalen uit Business Central…';
+      }
+      else if (total)
+      {
+        label.textContent = 'Projecten laden… ' + loaded + ' / ' + total;
+      }
+      else
+      {
+        label.textContent = 'Projecten laden… ' + loaded + ' opgehaald';
+      }
+    }
+
+    function renderProjects ()
+    {
+      const list = document.getElementById('projectList');
+      if (allProjects.length === 0)
+      {
+        list.innerHTML = '<div class="hint">Geen projecten gevonden.</div>';
+        return;
+      }
+
+      let html = '';
+      for (const p of allProjects)
+      {
+        const no = String(p.No || '');
+        const desc = String(p.Description || '');
+        const searchBlob = (no + ' ' + desc).toLowerCase();
+        html += '<label class="item" data-search="' + escapeHtml(searchBlob) + '">'
+          + '<input type="checkbox" name="projectNo[]" value="' + escapeHtml(no) + '">'
+          + '<div>'
+          + '<div class="item-title">' + escapeHtml(no) + '</div>'
+          + '<div class="item-sub">' + escapeHtml(desc) + '</div>'
+          + '</div>'
+          + '</label>';
+      }
+      list.innerHTML = html;
+      updateProjectCount();
+    }
+
+    function setInteractiveEnabled (enabled)
+    {
+      document.getElementById('projectSearch').disabled = !enabled;
+      document.getElementById('btnAll').disabled = !enabled;
+      document.getElementById('btnNone').disabled = !enabled;
+      document.getElementById('btnNext').disabled = !enabled;
+    }
+
+    async function loadProjectsBatched ()
+    {
+      let skip = 0;
+      let done = false;
+      let total = null;
+      allProjects = [];
+
+      setInteractiveEnabled(false);
+      setLoadingProgress(0, null, false, true);
+
+      try
+      {
+        while (!done)
+        {
+          const url = 'odata.php?action=projects_batch&skip=' + skip + '&top=' + BATCH_SIZE + '&_t=' + Date.now();
+          const response = await fetch(url, {
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin',
+            cache: 'no-store'
+          });
+
+          let payload = null;
+          const raw = await response.text();
+          try
+          {
+            payload = JSON.parse(raw);
+          }
+          catch (parseError)
+          {
+            throw new Error('Geen geldige JSON van server (HTTP ' + response.status + ').');
+          }
+
+          if (!response.ok || !payload.ok)
+          {
+            throw new Error((payload && payload.error) || ('Projecten laden mislukt (HTTP ' + response.status + ').'));
+          }
+
+          const rows = Array.isArray(payload.rows) ? payload.rows : [];
+          allProjects = allProjects.concat(rows);
+          skip = Number(payload.loaded || (skip + rows.length));
+          if (payload.total !== null && payload.total !== undefined)
+          {
+            total = Number(payload.total);
+          }
+          done = !!payload.done || rows.length === 0;
+          setLoadingProgress(allProjects.length, total, done, false);
+        }
+
+        renderProjects();
+        setInteractiveEnabled(true);
+        document.getElementById('loadProgressWrap').style.opacity = '0.85';
+      }
+      catch (error)
+      {
+        console.error(error);
+        document.getElementById('projectLoadingHint').textContent = error.message || 'Projecten laden mislukt.';
+        setLoadingProgress(allProjects.length, total, false, false);
+      }
+    }
+
     function toggleAllProjects (on)
     {
       document.querySelectorAll('input[type="checkbox"][name="projectNo[]"]').forEach(cb => cb.checked = on);
@@ -328,7 +489,8 @@ usort($projects, fn($a, $b) => strcmp((string) $a['No'], (string) $b['No']));
     {
       if (e.target && e.target.matches('input[name="projectNo[]"]')) updateProjectCount();
     });
-    updateProjectCount();
+
+    loadProjectsBatched();
   </script>
 </body>
 
