@@ -1,0 +1,12 @@
+{
+  "name": "horae/web",
+  "description": "Horae mandagenregister PDF export",
+  "require": {
+    "php": ">=8.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "Horae\\Pdf\\": "lib/Pdf/"
+    }
+  }
+}

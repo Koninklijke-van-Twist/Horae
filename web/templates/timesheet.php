@@ -3,7 +3,8 @@
 // $project, $weekInfo, $gridProject, $contractor, $locations, $totals, $documentStatus
 // $report['projectNo'], $report['weekNo'], $report['originals'], $report['overrideKeys']
 
-$signSize = 3;
+
+$pdfExportMode = $pdfExportMode ?? false;
 
 $contractor = $contractor ?? [
   'Naam' => '',
@@ -63,6 +64,13 @@ function ts_render_value(string $value, bool $bold = false): string
 
 $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
 $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $reportYear . '_W' . $weekNo);
+$exportTsNo = $report['exportTsNo'] ?? overrides_synthetic_ts_no($projectNo, $weekNo, $reportYear);
+$exportKey = $report['exportKey'] ?? $projectNo;
+$exportQuery = http_build_query([
+  'projectNo' => [$projectNo],
+  'tsNo' => [$exportTsNo],
+  'exportKey' => $exportKey,
+]);
 ?>
 <!doctype html>
 <html lang="nl">
@@ -106,6 +114,29 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       margin: 0 auto;
       overflow: visible;
       box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .ts-print-viewport > .ts-print-content {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+    }
+
+    .ts-print-viewport .ts-print-main {
+      flex: 0 0 auto;
+    }
+
+    .ts-print-viewport .ts-print-content > .ts-print-spacer {
+      display: block;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    .ts-print-viewport .ts-print-footer {
+      flex: 0 0 auto;
     }
 
     .ts-print-content {
@@ -113,6 +144,10 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       width: 100%;
       transform-origin: top left;
       box-sizing: border-box;
+    }
+
+    .ts-print-spacer {
+      display: none;
     }
 
     .small {
@@ -415,6 +450,31 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       table-layout: fixed;
     }
 
+    .sign-row--footer .sign-row__cell {
+      display: table-cell;
+      vertical-align: top;
+    }
+
+    .sign-row--footer .sign-row__cell.declarations {
+      width: 26%;
+      border: 2px solid #000;
+      padding: 6px 8px;
+      font-size: 9.2pt;
+    }
+
+    .sign-row--footer .sign-row__cell.sign {
+      width: 24.66%;
+    }
+
+    .sign-row--footer .sign-row__cell + .sign-row__cell {
+      border-left: none;
+    }
+
+    .sign-row--footer .sign.sign-row__cell + .sign.sign-row__cell {
+      border-left: none;
+      border-top: 2px solid #000;
+    }
+
     .sign {
       border: 2px solid #000;
       vertical-align: top;
@@ -441,6 +501,11 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       padding: 2px;
     }
 
+    .sign-signature-space {
+      min-height: 15mm;
+      box-sizing: border-box;
+    }
+
     .sign-name {
       font-weight: bold;
       background-color: #0099cc;
@@ -449,9 +514,13 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     }
 
     .declarations {
-      border: 2px solid #000;
-      padding: 6px 8px;
-      font-size: 9.2pt;
+      padding: 0;
+      font-size: inherit;
+    }
+
+    .sign-row--footer .declarations {
+      border: none;
+      padding: 0;
     }
 
     .declarations ol {
@@ -705,6 +774,28 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
         overflow: visible;
       }
 
+      /* Handtekeningblok onderaan pagina — past bij vaste PDF sign-velden */
+      timesheet.is-printing .ts-print-content {
+        display: flex !important;
+        flex-direction: column;
+        min-height: 194mm;
+        box-sizing: border-box;
+      }
+
+      timesheet.is-printing .ts-print-main {
+        flex: 0 0 auto;
+      }
+
+      timesheet.is-printing .ts-print-spacer {
+        display: block;
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+
+      timesheet.is-printing .ts-print-footer {
+        flex: 0 0 auto;
+      }
+
       timesheet.is-printing:not(.print-fit-active) .ts-print-content {
         width: 100% !important;
         transform: none !important;
@@ -743,6 +834,19 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
 
       timesheet.is-printing .sign + .sign {
         border-top: none !important;
+      }
+
+      timesheet.is-printing .sign-row--footer .sign-row__cell.declarations {
+        border: 2px solid #000 !important;
+      }
+
+      timesheet.is-printing .sign-row--footer .sign-row__cell + .sign-row__cell {
+        border-left: none !important;
+      }
+
+      timesheet.is-printing .sign-row--footer .sign.sign-row__cell + .sign.sign-row__cell {
+        border-left: none !important;
+        border-top: 2px solid #000 !important;
       }
 
       timesheet.is-printing .ts-print-content td[style*="border:0"],
@@ -809,6 +913,21 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
         border-top: none !important;
       }
 
+      timesheet.print-fit-active .sign-row--footer .sign-row__cell.declarations {
+        border-width: max(2px, calc(2px / var(--print-scale, 1))) !important;
+      }
+
+      timesheet.print-fit-active .sign-row--footer .sign-row__cell + .sign-row__cell {
+        border-left: none !important;
+      }
+
+      timesheet.print-fit-active .sign-row--footer .sign.sign-row__cell + .sign.sign-row__cell {
+        border-left: none !important;
+        border-top-width: max(2px, calc(2px / var(--print-scale, 1))) !important;
+        border-top-style: solid !important;
+        border-top-color: #000 !important;
+      }
+
       timesheet.print-fit-active .ts-print-content td[style*="border:0"],
       timesheet.print-fit-active .ts-print-content td[style*="border: 0"] {
         border: 0 !important;
@@ -830,7 +949,7 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
   <link rel="manifest" href="site.webmanifest">
 </head>
 
-<timesheet class="tight no-print" id="<?= h($timesheetDomId) ?>" data-project-no="<?= h($projectNo) ?>" data-week-no="<?= h((string) $weekNo) ?>" data-year-no="<?= h((string) $reportYear) ?>" data-horae-only="<?= $isHoraeOnly ? '1' : '0' ?>">
+<timesheet class="tight<?= $pdfExportMode ? ' is-printing export-pdf' : ' no-print' ?>" id="<?= h($timesheetDomId) ?>" data-project-no="<?= h($projectNo) ?>" data-week-no="<?= h((string) $weekNo) ?>" data-year-no="<?= h((string) $reportYear) ?>" data-horae-only="<?= $isHoraeOnly ? '1' : '0' ?>">
   <script>
     // Print autoscale: schaal naar A4-printgebied (breedte én hoogte).
     const PRINT_AUTOSCALE_ENABLED = true;
@@ -1023,17 +1142,21 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     }
   </script>
 
+  <?php if (!$pdfExportMode): ?>
   <div class="no-print" style="margin-bottom:10px;">
-    <button onclick="printOnly('<?= h($timesheetDomId) ?>')">Print / Opslaan als PDF</button>
+    <button type="button" onclick="printOnly('<?= h($timesheetDomId) ?>')">Print</button>
+    <a href="pdf_export.php?<?= h($exportQuery) ?>"><button type="button">Opslaan als PDF</button></a>
     <a href="."><button type="button">Terug naar beginscherm</button></a>
     <?php if ($isHoraeOnly): ?>
       <button type="button" class="btn-delete-week" id="deleteWeekBtn-<?= h($timesheetDomId) ?>">Horae-week verwijderen</button>
     <?php endif; ?>
   </div>
+  <?php endif; ?>
 
   <div class="ts-report-shell">
   <div class="ts-print-viewport">
   <div class="ts-print-content">
+  <div class="ts-print-main">
   <table class="header-layout" style="width:100%;">
     <tr>
       <td>
@@ -1224,41 +1347,37 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     </tbody>
   </table>
 
-  <table>
-    <tr>
-      <td style="width: 30%; max-width:300px;vertical-align:top;">
-        <div class="declarations">
-          <ol>
-            <li>voor de bovenvermelde werknemers de administratie wordt gevoerd.</li>
-            <li>voor deze werknemers verschuldigde premies en belastingen worden afgedragen.</li>
-            <li>door geen andere werknemers van de onder-aannemer ingeleend personeel in deze periode op het project is gewerkt.</li>
-          </ol>
-        </div>
-      </td>
-      <td>
-        <div class="sign-row">
-          <div class="sign">
-            <span class="sign-name">Naam hoofdaannemer:</span><br>
-            <span <?= ts_td_attrs('signatures.hoofdaannemer', 'Naam hoofdaannemer', $signatures['hoofdaannemer'] ?? '', $originals, $overrideSet, null, null, 'sign-name-value') ?>><?= ts_render_value($signatures['hoofdaannemer'] ?? '') ?></span>
-            <div class="sign-title underline">Handtekening hoofdaannemer</div>
-            <?php for ($i = 0; $i < $signSize; $i++): ?><br />&nbsp;<?php endfor; ?>
-          </div>
-          <div class="sign">
-            <span class="sign-name">Naam onderaannemer:</span><br>
-            <span <?= ts_td_attrs('signatures.onderaannemer', 'Naam onderaannemer', $signatures['onderaannemer'] ?? '', $originals, $overrideSet, null, null, 'sign-name-value') ?>><?= ts_render_value($signatures['onderaannemer'] ?? '') ?></span>
-            <div class="sign-title underline">Handtekening onderaannemer</div>
-            <?php for ($i = 0; $i < $signSize; $i++): ?><br />&nbsp;<?php endfor; ?>
-          </div>
-          <div class="sign">
-            <span class="sign-name">Naam uitvoerder:</span><br>
-            <span <?= ts_td_attrs('signatures.uitvoerder', 'Naam uitvoerder', $signatures['uitvoerder'] ?? '', $originals, $overrideSet, null, null, 'sign-name-value') ?>><?= ts_render_value($signatures['uitvoerder'] ?? '') ?></span>
-            <div class="sign-title underline">Handtekening uitvoerder</div>
-            <?php for ($i = 0; $i < $signSize; $i++): ?><br />&nbsp;<?php endfor; ?>
-          </div>
-        </div>
-      </td>
-    </tr>
-  </table>
+  </div>
+  <div class="ts-print-spacer" aria-hidden="true"></div>
+  <div class="ts-print-footer">
+  <div class="sign-row sign-row--footer">
+    <div class="sign-row__cell declarations">
+      <ol>
+        <li>voor de bovenvermelde werknemers de administratie wordt gevoerd.</li>
+        <li>voor deze werknemers verschuldigde premies en belastingen worden afgedragen.</li>
+        <li>door geen andere werknemers van de onder-aannemer ingeleend personeel in deze periode op het project is gewerkt.</li>
+      </ol>
+    </div>
+    <div class="sign sign-row__cell sign-field-target" data-sig-field="Handtekening_hoofdaannemer">
+      <span class="sign-name">Naam hoofdaannemer:</span><br>
+      <span <?= ts_td_attrs('signatures.hoofdaannemer', 'Naam hoofdaannemer', $signatures['hoofdaannemer'] ?? '', $originals, $overrideSet, null, null, 'sign-name-value') ?>><?= ts_render_value($signatures['hoofdaannemer'] ?? '') ?></span>
+      <div class="sign-title underline">Handtekening hoofdaannemer</div>
+      <div class="sign-signature-space" aria-hidden="true"></div>
+    </div>
+    <div class="sign sign-row__cell sign-field-target" data-sig-field="Handtekening_onderaannemer">
+      <span class="sign-name">Naam onderaannemer:</span><br>
+      <span <?= ts_td_attrs('signatures.onderaannemer', 'Naam onderaannemer', $signatures['onderaannemer'] ?? '', $originals, $overrideSet, null, null, 'sign-name-value') ?>><?= ts_render_value($signatures['onderaannemer'] ?? '') ?></span>
+      <div class="sign-title underline">Handtekening onderaannemer</div>
+      <div class="sign-signature-space" aria-hidden="true"></div>
+    </div>
+    <div class="sign sign-row__cell sign-field-target" data-sig-field="Handtekening_uitvoerder">
+      <span class="sign-name">Naam uitvoerder:</span><br>
+      <span <?= ts_td_attrs('signatures.uitvoerder', 'Naam uitvoerder', $signatures['uitvoerder'] ?? '', $originals, $overrideSet, null, null, 'sign-name-value') ?>><?= ts_render_value($signatures['uitvoerder'] ?? '') ?></span>
+      <div class="sign-title underline">Handtekening uitvoerder</div>
+      <div class="sign-signature-space" aria-hidden="true"></div>
+    </div>
+  </div>
+  </div>
   </div>
   </div>
   <div class="hours-block__add no-print">
@@ -1266,7 +1385,7 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
   </div>
   </div>
 
-  <?php if ($isHoraeOnly): ?>
+  <?php if (!$pdfExportMode && $isHoraeOnly): ?>
   <div class="delete-week-backdrop no-print" id="deleteWeekModal-<?= h($timesheetDomId) ?>" aria-hidden="true">
     <div class="delete-week-modal" role="dialog" aria-modal="true">
       <div class="delete-week-stripes"></div>
@@ -1286,6 +1405,7 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
   </div>
   <?php endif; ?>
 
+  <?php if (!$pdfExportMode): ?>
   <div class="override-modal-backdrop no-print" id="overrideModal-<?= h($timesheetDomId) ?>" aria-hidden="true">
     <div class="override-modal" role="dialog" aria-modal="true">
       <h2 id="overrideModalTitle-<?= h($timesheetDomId) ?>">Overschrijving</h2>
@@ -1309,7 +1429,9 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       </div>
     </div>
   </div>
+  <?php endif; ?>
 
+  <?php if (!$pdfExportMode): ?>
   <script>
     (function ()
     {
@@ -1781,9 +1903,12 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       });
     })();
   </script>
+  <?php endif; ?>
 </timesheet>
+<?php if (!$pdfExportMode): ?>
 <br class="no-print" />
 <hr class="no-print" />
 <br class="no-print" />
+<?php endif; ?>
 
 </html>
