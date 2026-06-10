@@ -441,7 +441,6 @@ foreach ($reportsByProject as $reportKey => &$report) {
     overrides_apply_to_report($report, $overrideMap);
     overrides_apply_row_state($report, $overrideMap);
     pdf_recalc_totals($report);
-    pdf_reapply_total_overrides($report, $overrideMap);
 
     $report['overrideKeys'] = array_keys($overrideMap);
     $overrideSet = array_fill_keys($report['overrideKeys'], true);

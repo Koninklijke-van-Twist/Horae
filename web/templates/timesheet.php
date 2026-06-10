@@ -84,6 +84,37 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       color: #000;
     }
 
+    timesheet {
+      display: block;
+    }
+
+    .ts-report-shell {
+      position: relative;
+      width: min(100%, 297mm);
+      margin: 0 auto;
+      overflow: visible;
+    }
+
+    .ts-report-shell .ts-print-viewport {
+      width: 100%;
+      margin: 0;
+    }
+
+    .ts-print-viewport {
+      width: min(100%, 297mm);
+      aspect-ratio: 297 / 210;
+      margin: 0 auto;
+      overflow: visible;
+      box-sizing: border-box;
+    }
+
+    .ts-print-content {
+      display: block;
+      width: 100%;
+      transform-origin: top left;
+      box-sizing: border-box;
+    }
+
     .small {
       font-size: 6.5pt;
     }
@@ -98,12 +129,12 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     }
 
     .box {
-      border: 1px solid #000;
+      border: 2px solid #000;
     }
 
     .box th,
     .box td {
-      border: 1px solid #000;
+      border: 2px solid #000;
       padding: 4px 6px;
       vertical-align: top;
     }
@@ -115,7 +146,7 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     }
 
     .nohead td {
-      border: 1px solid #000;
+      border: 2px solid #000;
       padding: 4px 6px;
     }
 
@@ -142,7 +173,12 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     }
 
     .top-mini td {
-      border: 1px solid #000;
+      border: 2px solid #000;
+    }
+
+    .header-layout,
+    .header-layout > tbody > tr > td {
+      border: none;
     }
 
     .top3 {
@@ -201,7 +237,7 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
 
     .hours th,
     .hours td {
-      border: 1px solid #000;
+      border: 2px solid #000;
       padding: 4px 5px;
     }
 
@@ -265,7 +301,7 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       min-width: 12px !important;
       max-width: 12px !important;
       padding: 0 !important;
-      border: 1px solid #000;
+      border: 2px solid #000;
       vertical-align: middle;
       text-align: center;
       overflow: hidden;
@@ -335,10 +371,14 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       cursor: pointer;
     }
 
-    tr.row-add-placeholder td {
-      text-align: center;
-      color: #64748b;
-      padding: 8px !important;
+    .hours-block__add {
+      position: absolute;
+      left: calc(-8px - 36px);
+      width: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
     }
 
     .row-add-btn {
@@ -365,7 +405,7 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     }
 
     .totals-line td {
-      border: 1px solid #000;
+      border: 2px solid #000;
       padding: 6px;
     }
 
@@ -376,7 +416,7 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     }
 
     .sign {
-      border: 1px solid #000;
+      border: 2px solid #000;
       vertical-align: top;
       padding-top: 2px;
     }
@@ -409,7 +449,7 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     }
 
     .declarations {
-      border: 1px solid #000;
+      border: 2px solid #000;
       padding: 6px 8px;
       font-size: 9.2pt;
     }
@@ -635,27 +675,135 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       }
 
       tr.row-deleted,
-      tr.row-add-placeholder,
       .col-actions,
       col.col-actions-col {
         display: none !important;
       }
 
-      timesheet.print-fit-active {
+      timesheet.is-printing {
         display: block !important;
-        transform: scale(var(--print-scale, 1));
-        transform-origin: top left;
-        width: var(--print-width, auto) !important;
+        page-break-after: avoid !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+
+      timesheet.is-printing .ts-report-shell {
+        width: 100%;
+        max-width: none;
+      }
+
+      timesheet.is-printing .ts-print-viewport {
+        width: 100%;
+        max-width: none;
+        aspect-ratio: unset;
+        margin: 0;
+        overflow: visible;
+      }
+
+      timesheet.is-printing .ts-print-content {
+        width: 100% !important;
+        transform: none !important;
+      }
+
+      timesheet.is-printing .ts-print-content table {
         page-break-inside: avoid;
         break-inside: avoid;
       }
 
-      @supports (zoom: 1) {
-        timesheet.print-fit-active {
-          transform: none;
-          zoom: var(--print-scale, 1);
-          width: auto !important;
-        }
+      timesheet.is-printing .header-layout td,
+      timesheet.is-printing .header-layout th {
+        border: none !important;
+      }
+
+      timesheet.is-printing .box,
+      timesheet.is-printing .box td,
+      timesheet.is-printing .box th,
+      timesheet.is-printing .nohead td,
+      timesheet.is-printing .hours td,
+      timesheet.is-printing .hours th,
+      timesheet.is-printing .top-mini td,
+      timesheet.is-printing .totals-line td,
+      timesheet.is-printing .sign,
+      timesheet.is-printing .declarations {
+        border-color: #000 !important;
+        border-style: solid !important;
+        border-width: 2px !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      timesheet.is-printing .sign + .sign {
+        border-top: none !important;
+      }
+
+      timesheet.is-printing .ts-print-content td[style*="border:0"],
+      timesheet.is-printing .ts-print-content td[style*="border: 0"] {
+        border: 0 !important;
+      }
+
+      timesheet.print-fit-active {
+        display: block !important;
+        box-sizing: border-box;
+        width: var(--print-scaled-width) !important;
+        height: var(--print-scaled-height) !important;
+        max-width: var(--print-scaled-width) !important;
+        max-height: var(--print-scaled-height) !important;
+        overflow: hidden !important;
+        page-break-after: avoid !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+
+      timesheet.print-fit-active .ts-print-viewport {
+        width: var(--print-target-width) !important;
+        aspect-ratio: unset;
+        height: var(--print-scaled-height) !important;
+        overflow: hidden !important;
+      }
+
+      timesheet.print-fit-active .ts-print-content {
+        width: var(--print-width, auto) !important;
+        transform: scale(var(--print-scale, 1));
+        transform-origin: top left;
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+
+      timesheet.print-fit-active .ts-print-content table {
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+
+      timesheet.print-fit-active .header-layout td,
+      timesheet.print-fit-active .header-layout th {
+        border: none !important;
+      }
+
+      /* Compenseer lijndikte voor transform: scale() — anders worden borders onzichtbaar dun */
+      timesheet.print-fit-active .box,
+      timesheet.print-fit-active .box td,
+      timesheet.print-fit-active .box th,
+      timesheet.print-fit-active .nohead td,
+      timesheet.print-fit-active .hours td,
+      timesheet.print-fit-active .hours th,
+      timesheet.print-fit-active .top-mini td,
+      timesheet.print-fit-active .totals-line td,
+      timesheet.print-fit-active .sign,
+      timesheet.print-fit-active .declarations {
+        border-color: #000 !important;
+        border-style: solid !important;
+        border-width: max(2px, calc(2px / var(--print-scale, 1))) !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      timesheet.print-fit-active .sign + .sign {
+        border-top: none !important;
+      }
+
+      timesheet.print-fit-active .ts-print-content td[style*="border:0"],
+      timesheet.print-fit-active .ts-print-content td[style*="border: 0"] {
+        border: 0 !important;
       }
 
       td.editable-cell.has-override,
@@ -676,6 +824,9 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
 
 <timesheet class="tight no-print" id="<?= h($timesheetDomId) ?>" data-project-no="<?= h($projectNo) ?>" data-week-no="<?= h((string) $weekNo) ?>" data-year-no="<?= h((string) $reportYear) ?>" data-horae-only="<?= $isHoraeOnly ? '1' : '0' ?>">
   <script>
+    // Tijdelijk uit: A4-aspectratio op scherm; print zonder transform-schaal (betere lijndikte).
+    const PRINT_AUTOSCALE_ENABLED = true;
+
     function getPrintableSizePx ()
     {
       const mmToPx = 96 / 25.4;
@@ -686,10 +837,16 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       };
     }
 
-    function measureTimesheetForPrint (el)
+    function measureTimesheetForPrint (contentEl, rootEl, layoutWidthPx)
     {
-      const hiddenNodes = el.querySelectorAll('.no-print');
+      const root = rootEl || contentEl.closest('timesheet') || contentEl;
+      const hiddenNodes = root.querySelectorAll('.no-print');
       const previousDisplay = [];
+      const previousTransform = contentEl.style.transform;
+      const previousWidth = contentEl.style.width;
+
+      contentEl.style.transform = 'none';
+      contentEl.style.width = layoutWidthPx ? (layoutWidthPx + 'px') : '100%';
 
       hiddenNodes.forEach(function (node, index)
       {
@@ -697,39 +854,95 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
         node.style.display = 'none';
       });
 
-      const width = el.scrollWidth;
-      const height = el.scrollHeight;
+      void contentEl.offsetHeight;
+
+      const width = Math.ceil(contentEl.scrollWidth);
+      let height = Math.ceil(contentEl.scrollHeight);
+      const children = contentEl.children;
+      if (children.length > 0) {
+        const first = children[0];
+        const last = children[children.length - 1];
+        const measuredHeight = Math.ceil(
+          (last.offsetTop - first.offsetTop) + last.offsetHeight
+        );
+        if (measuredHeight > height) {
+          height = measuredHeight;
+        }
+      }
 
       hiddenNodes.forEach(function (node, index)
       {
         node.style.display = previousDisplay[index];
       });
 
+      contentEl.style.transform = previousTransform;
+      contentEl.style.width = previousWidth;
+
       return { width, height };
     }
 
     function applyPrintFit (el)
     {
+      if (!PRINT_AUTOSCALE_ENABLED) return;
+
+      const content = el.querySelector('.ts-print-content');
+      const viewport = el.querySelector('.ts-print-viewport');
+      if (!content || !viewport) return;
+
       el.classList.remove('print-fit-active');
       el.style.removeProperty('--print-scale');
       el.style.removeProperty('--print-width');
+      el.style.removeProperty('--print-target-width');
+      el.style.removeProperty('--print-scaled-width');
+      el.style.removeProperty('--print-scaled-height');
+      viewport.style.removeProperty('width');
+      viewport.style.removeProperty('height');
+      content.style.removeProperty('transform');
+      content.style.removeProperty('width');
 
-      const size = measureTimesheetForPrint(el);
       const printable = getPrintableSizePx();
-      const scale = Math.min(1, printable.width / size.width, printable.height / size.height);
+      const size = measureTimesheetForPrint(content, el, printable.width);
+      const safety = 0.98;
+      const scale = Math.min(1, (printable.height / size.height) * safety);
+      const scaledWidth = Math.ceil(printable.width * scale);
+      const scaledHeight = Math.ceil(size.height * scale);
 
-      if (scale < 0.995) {
-        el.style.setProperty('--print-scale', scale.toFixed(4));
-        el.style.setProperty('--print-width', size.width + 'px');
-        el.classList.add('print-fit-active');
+      el.style.setProperty('--print-scale', scale.toFixed(4));
+      el.style.setProperty('--print-width', printable.width + 'px');
+      el.style.setProperty('--print-target-width', printable.width + 'px');
+      el.style.setProperty('--print-scaled-width', scaledWidth + 'px');
+      el.style.setProperty('--print-scaled-height', scaledHeight + 'px');
+      el.classList.add('print-fit-active');
+
+      content.style.width = printable.width + 'px';
+      content.style.transformOrigin = 'top left';
+      if (scale < 0.999) {
+        content.style.transform = 'scale(' + scale.toFixed(4) + ')';
       }
     }
 
     function resetPrintFit (el)
     {
+      const content = el.querySelector('.ts-print-content');
+      const viewport = el.querySelector('.ts-print-viewport');
+
       el.classList.remove('print-fit-active');
       el.style.removeProperty('--print-scale');
       el.style.removeProperty('--print-width');
+      el.style.removeProperty('--print-target-width');
+      el.style.removeProperty('--print-scaled-width');
+      el.style.removeProperty('--print-scaled-height');
+
+      if (viewport) {
+        viewport.style.removeProperty('width');
+        viewport.style.removeProperty('height');
+      }
+
+      if (content) {
+        content.style.removeProperty('transform');
+        content.style.removeProperty('transform-origin');
+        content.style.removeProperty('width');
+      }
     }
 
     function printOnly (id)
@@ -738,19 +951,39 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       if (!el) return;
 
       el.classList.remove('no-print');
+      el.classList.add('is-printing');
       document.title = "Mandagenregister <?= h($projectNo) ?>";
 
-      applyPrintFit(el);
+      const onBeforePrint = function ()
+      {
+        applyPrintFit(el);
+      };
 
       const cleanup = function ()
       {
         resetPrintFit(el);
+        el.classList.remove('is-printing');
         el.classList.add('no-print');
+        window.removeEventListener('beforeprint', onBeforePrint);
         window.removeEventListener('afterprint', cleanup);
       };
 
       window.addEventListener('afterprint', cleanup);
-      window.print();
+
+      if (PRINT_AUTOSCALE_ENABLED) {
+        applyPrintFit(el);
+        window.addEventListener('beforeprint', onBeforePrint);
+        requestAnimationFrame(function ()
+        {
+          requestAnimationFrame(function ()
+          {
+            applyPrintFit(el);
+            window.print();
+          });
+        });
+      } else {
+        window.print();
+      }
     }
   </script>
 
@@ -762,7 +995,10 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     <?php endif; ?>
   </div>
 
-  <table style="width:100%;">
+  <div class="ts-report-shell">
+  <div class="ts-print-viewport">
+  <div class="ts-print-content">
+  <table class="header-layout" style="width:100%;">
     <tr>
       <td>
         <div class=" logo-wrap">
@@ -779,12 +1015,12 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
             <td class="fullw" style="vertical-align:top; padding:0; border:0;">
               <table style="width:100%; border-collapse:collapse;">
                 <tr>
-                  <td <?= ts_td_attrs('weekInfo.start', 'Startdatum', fmtDateNL($start), $originals, $overrideSet) ?> style="border:1px solid #000;">
+                  <td <?= ts_td_attrs('weekInfo.start', 'Startdatum', fmtDateNL($start), $originals, $overrideSet) ?> style="border:2px solid #000;">
                     <p class="blue fullw"><b>Startdatum</b></p><?= ts_render_value(fmtDateNL($start)) ?>
                   </td>
                 </tr>
                 <tr>
-                  <td <?= ts_td_attrs('weekInfo.end', 'Einddatum', fmtDateNL($end), $originals, $overrideSet) ?> style="border:1px solid #000;">
+                  <td <?= ts_td_attrs('weekInfo.end', 'Einddatum', fmtDateNL($end), $originals, $overrideSet) ?> style="border:2px solid #000;">
                     <p class="blue fullw"><b>Einddatum</b></p><?= ts_render_value(fmtDateNL($end)) ?>
                   </td>
                 </tr>
@@ -930,18 +1166,11 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
           <td <?= ts_td_attrs('people.' . $personKey . '.name', 'Naam en voorletters werknemer', $name, $originals, $overrideSet, $rowLabel, (int) $weekVal, 'name', $saveYear) ?>><?= ts_render_value($name) ?></td>
           <td <?= ts_td_attrs('people.' . $personKey . '.week', 'Week', (string) $weekVal, $originals, $overrideSet, $rowLabel, (int) $weekVal, 'num', $saveYear) ?>><?= $weekDisplay !== '' ? $weekDisplay : '&nbsp;' ?></td>
           <?php for ($i = 0; $i < 7; $i++): ?>
-            <td <?= ts_td_attrs('people.' . $personKey . '.days.' . $i, $dayNames[$i], fmtHours($days[$i] ?? 0), $originals, $overrideSet, $rowLabel, (int) $weekVal, 'num', $saveYear) ?>><?= ts_render_value(fmtHours($days[$i] ?? 0)) ?></td>
+            <td <?= ts_td_attrs('people.' . $personKey . '.days.' . $i, $dayNames[$i], fmtHours($days[$i] ?? 0), $originals, $overrideSet, $rowLabel, (int) $weekVal, 'num', $saveYear) ?> data-field-type="hours"><?= ts_render_value(fmtHours($days[$i] ?? 0)) ?></td>
           <?php endfor; ?>
-          <td <?= ts_td_attrs('people.' . $personKey . '.total', 'Totaal', fmtHours($rowTotal), $originals, $overrideSet, $rowLabel, (int) $weekVal, 'num', $saveYear) ?>><?= ts_render_value(fmtHours($rowTotal), true) ?></td>
+          <td class="num person-total" data-person-key="<?= h($personKey) ?>"><?= ts_render_value(fmtHours($rowTotal), true) ?></td>
         </tr>
       <?php endforeach; ?>
-
-      <tr class="row-add-placeholder no-print">
-        <td class="col-actions no-print"></td>
-        <td colspan="<?= 3 + count($dayNames) + 1 ?>">
-          <button type="button" class="row-add-btn" title="Nieuwe regel toevoegen" aria-label="Nieuwe regel toevoegen">+</button>
-        </td>
-      </tr>
 
       <?php
       $workdayTotals = 0.0;
@@ -952,9 +1181,9 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
         <td class="no-print col-actions"></td>
         <td class="blue" colspan="3" style="text-align:right;"><b>Totaal</b></td>
         <?php for ($i = 0; $i < 7; $i++): ?>
-          <td class="blue num" <?= ts_td_attrs('totals.days.' . $i, 'Totaal ' . $dayNames[$i], fmtHours($totals['days'][$i] ?? 0), $originals, $overrideSet, null, null, 'blue num') ?>><?= ts_render_value(fmtHours($totals['days'][$i] ?? 0), true) ?></td>
+          <td class="blue num totals-day" data-total-day="<?= $i ?>"><?= ts_render_value(fmtHours($totals['days'][$i] ?? 0), true) ?></td>
         <?php endfor; ?>
-        <td <?= ts_td_attrs('totals.all', 'Totaal', fmtHours($workdayTotals), $originals, $overrideSet, null, null, 'blue num') ?>><?= ts_render_value(fmtHours($workdayTotals), true) ?></td>
+        <td class="blue num totals-all" data-total-all="1"><?= ts_render_value(fmtHours($workdayTotals), true) ?></td>
       </tr>
     </tbody>
   </table>
@@ -994,6 +1223,12 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       </td>
     </tr>
   </table>
+  </div>
+  </div>
+  <div class="hours-block__add no-print">
+    <button type="button" class="row-add-btn" title="Nieuwe regel toevoegen" aria-label="Nieuwe regel toevoegen">+</button>
+  </div>
+  </div>
 
   <?php if ($isHoraeOnly): ?>
   <div class="delete-week-backdrop no-print" id="deleteWeekModal-<?= h($timesheetDomId) ?>" aria-hidden="true">
@@ -1101,13 +1336,103 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
         }
       }
 
+      function isHoursDayCell (cell)
+      {
+        return cell && cell.dataset.fieldType === 'hours';
+      }
+
+      function parseHoursInput (value)
+      {
+        const normalized = String(value || '').trim().replace(',', '.');
+        if (normalized === '') return 0;
+        const n = Number(normalized);
+        return Number.isFinite(n) ? n : NaN;
+      }
+
+      function isValidHoursInput (value)
+      {
+        const trimmed = String(value || '').trim();
+        if (trimmed === '') return true;
+        return /^[0-9]+([,.][0-9]+)?$/.test(trimmed);
+      }
+
+      function formatHoursDisplay (value)
+      {
+        const n = parseHoursInput(value);
+        if (!Number.isFinite(n) || Math.abs(n) < 0.00001) return '';
+        return String(n.toFixed(2)).replace(/\.?0+$/, '').replace('.', ',');
+      }
+
+      function getCellHoursValue (cell)
+      {
+        return parseHoursInput(getCellDisplayValue(cell));
+      }
+
+      function setBoldCellValue (cell, value)
+      {
+        cell.textContent = '';
+        const display = value || '';
+        if (display === '') {
+          cell.innerHTML = '&nbsp;';
+          return;
+        }
+        const b = document.createElement('b');
+        b.textContent = display;
+        cell.appendChild(b);
+      }
+
+      function recalcTotalsFromGrid ()
+      {
+        const dayTotals = [0, 0, 0, 0, 0, 0, 0];
+        let grandTotal = 0;
+
+        root.querySelectorAll('tr.person-row:not(.row-deleted)').forEach(function (row)
+        {
+          let rowSum = 0;
+          for (let i = 0; i < 7; i++) {
+            const dayCell = row.querySelector('[data-override-key$=".days.' + i + '"]');
+            const dayVal = dayCell ? getCellHoursValue(dayCell) : 0;
+            if (!Number.isFinite(dayVal)) continue;
+            rowSum += dayVal;
+            dayTotals[i] += dayVal;
+          }
+          grandTotal += rowSum;
+          const totalCell = row.querySelector('.person-total');
+          if (totalCell) {
+            setBoldCellValue(totalCell, formatHoursDisplay(rowSum));
+          }
+        });
+
+        for (let i = 0; i < 7; i++) {
+          const footerCell = root.querySelector('.totals-day[data-total-day="' + i + '"]');
+          if (footerCell) {
+            setBoldCellValue(footerCell, formatHoursDisplay(dayTotals[i]));
+          }
+        }
+
+        const allCell = root.querySelector('.totals-all');
+        if (allCell) {
+          setBoldCellValue(allCell, formatHoursDisplay(grandTotal));
+        }
+      }
+
       function openModal (cell)
       {
         activeCell = cell;
         const label = cell.dataset.label || 'veld';
         const rowLabel = cell.dataset.rowLabel ? ' ' + cell.dataset.rowLabel : '';
         modalTitle.textContent = 'Geef een overschrijving op voor ' + label + rowLabel;
-        modalHint.textContent = 'Let op: Deze waarde wordt niet in BC ingevoerd, en bestaat alleen op Horae.';
+        if (isHoursDayCell(cell)) {
+          modalHint.textContent = 'Voer uren in (alleen getallen, bijv. 8 of 8,5).';
+          modalInput.inputMode = 'decimal';
+          modalInput.setAttribute('inputmode', 'decimal');
+          modalInput.setAttribute('pattern', '[0-9]+([,.][0-9]+)?');
+        } else {
+          modalHint.textContent = 'Let op: Deze waarde wordt niet in BC ingevoerd, en bestaat alleen op Horae.';
+          modalInput.inputMode = 'text';
+          modalInput.setAttribute('inputmode', 'text');
+          modalInput.removeAttribute('pattern');
+        }
         modalInput.value = getCellDisplayValue(cell);
         modal.classList.add('open');
         modal.setAttribute('aria-hidden', 'false');
@@ -1155,6 +1480,11 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
         const saveYear = resolveSaveYear(activeCell);
         const value = reset ? null : modalInput.value;
 
+        if (!reset && isHoursDayCell(activeCell) && !isValidHoursInput(modalInput.value)) {
+          alert('Alleen getallen toegestaan (bijv. 8 of 8,5).');
+          return;
+        }
+
         try {
           await postOverrideAction('override_save', {
             projectNo,
@@ -1169,9 +1499,14 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
           return;
         }
 
-        const displayValue = reset ? (activeCell.dataset.original || '') : modalInput.value;
+        const displayValue = reset
+          ? (activeCell.dataset.original || '')
+          : (isHoursDayCell(activeCell) ? formatHoursDisplay(modalInput.value) : modalInput.value);
         setCellDisplayValue(activeCell, displayValue);
         setOverrideGlow(activeCell, !reset);
+        if (isHoursDayCell(activeCell)) {
+          recalcTotalsFromGrid();
+        }
         closeModal();
       }
 
@@ -1307,6 +1642,26 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
         deleteWeekModal.addEventListener('click', function (event) {
           if (event.target === deleteWeekModal) closeDeleteWeekModal();
         });
+      }
+
+      function positionRowAddBtn ()
+      {
+        const shell = root.querySelector('.ts-report-shell');
+        const addSlot = root.querySelector('.hours-block__add');
+        const totalsRow = root.querySelector('.hours tbody .totals-row');
+        if (!shell || !addSlot || !totalsRow) return;
+
+        const shellRect = shell.getBoundingClientRect();
+        const totalsRect = totalsRow.getBoundingClientRect();
+        const top = totalsRect.top - shellRect.top + (totalsRect.height - addSlot.offsetHeight) / 2;
+        addSlot.style.top = top + 'px';
+      }
+
+      positionRowAddBtn();
+      window.addEventListener('resize', positionRowAddBtn);
+      window.addEventListener('load', positionRowAddBtn);
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(positionRowAddBtn);
       }
 
       root.addEventListener('click', function (event)
