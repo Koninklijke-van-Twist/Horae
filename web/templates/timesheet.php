@@ -692,6 +692,11 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
         max-width: none;
       }
 
+      timesheet.print-fit-active .ts-report-shell {
+        width: var(--print-scaled-width) !important;
+        max-width: var(--print-scaled-width) !important;
+      }
+
       timesheet.is-printing .ts-print-viewport {
         width: 100%;
         max-width: none;
@@ -700,9 +705,13 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
         overflow: visible;
       }
 
-      timesheet.is-printing .ts-print-content {
+      timesheet.is-printing:not(.print-fit-active) .ts-print-content {
         width: 100% !important;
         transform: none !important;
+      }
+
+      timesheet.is-printing.print-fit-active .ts-print-content {
+        width: var(--print-width, auto) !important;
       }
 
       timesheet.is-printing .ts-print-content table {
@@ -763,7 +772,6 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
 
       timesheet.print-fit-active .ts-print-content {
         width: var(--print-width, auto) !important;
-        transform: scale(var(--print-scale, 1));
         transform-origin: top left;
         page-break-inside: avoid;
         break-inside: avoid;
@@ -824,7 +832,7 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
 
 <timesheet class="tight no-print" id="<?= h($timesheetDomId) ?>" data-project-no="<?= h($projectNo) ?>" data-week-no="<?= h((string) $weekNo) ?>" data-year-no="<?= h((string) $reportYear) ?>" data-horae-only="<?= $isHoraeOnly ? '1' : '0' ?>">
   <script>
-    // Tijdelijk uit: A4-aspectratio op scherm; print zonder transform-schaal (betere lijndikte).
+    // Print autoscale: schaal naar A4-printgebied (breedte én hoogte).
     const PRINT_AUTOSCALE_ENABLED = true;
 
     function getPrintableSizePx ()
@@ -881,6 +889,29 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       return { width, height };
     }
 
+    function applyContentScale (contentEl, size, scale)
+    {
+      contentEl.style.width = size.width + 'px';
+      contentEl.style.removeProperty('transform');
+      contentEl.style.removeProperty('transform-origin');
+      contentEl.style.removeProperty('margin-bottom');
+      contentEl.style.removeProperty('margin-right');
+      contentEl.style.removeProperty('zoom');
+
+      if (scale >= 0.999) return;
+
+      const scaleText = scale.toFixed(4);
+      if (typeof contentEl.style.zoom === 'string') {
+        contentEl.style.zoom = scaleText;
+        return;
+      }
+
+      contentEl.style.transformOrigin = 'top left';
+      contentEl.style.transform = 'scale(' + scaleText + ')';
+      contentEl.style.marginBottom = (-size.height * (1 - scale)).toFixed(2) + 'px';
+      contentEl.style.marginRight = (-size.width * (1 - scale)).toFixed(2) + 'px';
+    }
+
     function applyPrintFit (el)
     {
       if (!PRINT_AUTOSCALE_ENABLED) return;
@@ -898,27 +929,29 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       viewport.style.removeProperty('width');
       viewport.style.removeProperty('height');
       content.style.removeProperty('transform');
+      content.style.removeProperty('transform-origin');
+      content.style.removeProperty('margin-bottom');
+      content.style.removeProperty('margin-right');
+      content.style.removeProperty('zoom');
       content.style.removeProperty('width');
 
       const printable = getPrintableSizePx();
       const size = measureTimesheetForPrint(content, el, printable.width);
-      const safety = 0.98;
-      const scale = Math.min(1, (printable.height / size.height) * safety);
-      const scaledWidth = Math.ceil(printable.width * scale);
+      const safety = 0.97;
+      const scaleW = (printable.width / size.width) * safety;
+      const scaleH = (printable.height / size.height) * safety;
+      const scale = Math.min(1, scaleW, scaleH);
+      const scaledWidth = Math.ceil(size.width * scale);
       const scaledHeight = Math.ceil(size.height * scale);
 
       el.style.setProperty('--print-scale', scale.toFixed(4));
-      el.style.setProperty('--print-width', printable.width + 'px');
-      el.style.setProperty('--print-target-width', printable.width + 'px');
+      el.style.setProperty('--print-width', size.width + 'px');
+      el.style.setProperty('--print-target-width', scaledWidth + 'px');
       el.style.setProperty('--print-scaled-width', scaledWidth + 'px');
       el.style.setProperty('--print-scaled-height', scaledHeight + 'px');
       el.classList.add('print-fit-active');
 
-      content.style.width = printable.width + 'px';
-      content.style.transformOrigin = 'top left';
-      if (scale < 0.999) {
-        content.style.transform = 'scale(' + scale.toFixed(4) + ')';
-      }
+      applyContentScale(content, size, scale);
     }
 
     function resetPrintFit (el)
@@ -941,6 +974,9 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
       if (content) {
         content.style.removeProperty('transform');
         content.style.removeProperty('transform-origin');
+        content.style.removeProperty('margin-bottom');
+        content.style.removeProperty('margin-right');
+        content.style.removeProperty('zoom');
         content.style.removeProperty('width');
       }
     }
