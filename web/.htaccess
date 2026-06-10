@@ -1,0 +1,5 @@
+# Horae — pad naar headless Chromium/Chrome voor PDF-export (pdf_export.php).
+# Pas het pad aan als google-chrome-stable op jouw server ergens anders staat:
+#   readlink -f "$(which google-chrome)" 
+#   (vaak: /opt/google/chrome/google-chrome)
+SetEnv HORAE_CHROMIUM_PATH /opt/google/chrome/google-chrome

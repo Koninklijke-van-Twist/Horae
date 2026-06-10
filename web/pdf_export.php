@@ -33,7 +33,7 @@ $flatPdf = null;
 $signedPdf = null;
 
 try {
-    $flatPdf = ChromePdfRenderer::renderHtmlToPdf($html, __DIR__, pdf_export_base_url());
+    $flatPdf = ChromePdfRenderer::renderHtmlToPdf($html, __DIR__, pdf_resolve_export_base_url());
     $signedPdf = tempnam(sys_get_temp_dir(), 'horae_signed_');
     if ($signedPdf === false) {
         throw new RuntimeException('Tijdelijk PDF-bestand aanmaken mislukt');

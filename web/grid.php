@@ -26,7 +26,9 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
             $bsn = $emp['Social_Security_No'] ?? 'Onbekend';
             $name = $res['Name'] ?? $resourceNo;
 
-            $dayTotals[$line['Job_No']] = array_fill(0, 7, 0.0);
+            if (!isset($dayTotals[$line['Job_No']])) {
+                $dayTotals[$line['Job_No']] = array_fill(0, 7, 0.0);
+            }
 
             $days = [];
             for ($i = 1; $i <= 7; $i++) {
@@ -96,18 +98,20 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
     $byProject = [];
 
     foreach ($people as $person) {
-        if (!isset($byProject[$person['project']]))
+        if (!isset($byProject[$person['project']])) {
+            $projectDayTotals = $dayTotals[$person['project']] ?? array_fill(0, 7, 0.0);
             $byProject[$person['project']] = [
                 'projectNo' => $person['project'],
                 'people' => [$person],
                 'multiYear' => $person['multiYear'],
                 'totals' => [
-                    'days' => $dayTotals,
-                    'all' => array_sum($dayTotals),
+                    'days' => $projectDayTotals,
+                    'all' => array_sum($projectDayTotals),
                 ],
             ];
-        else
+        } else {
             array_push($byProject[$person['project']]['people'], $person);
+        }
 
         if ($person['multiYear'])
             $byProject[$person['project']]['multiYear'] = true;

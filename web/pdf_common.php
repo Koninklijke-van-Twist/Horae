@@ -520,13 +520,34 @@ function pdf_build_export_filename(array $report): string
 
 function pdf_export_base_url(): string
 {
-    $port = (int) ($_SERVER['SERVER_PORT'] ?? 80);
+    $envUrl = trim((string) getenv('HORAE_PDF_EXPORT_BASE_URL'));
+    if ($envUrl !== '') {
+        return rtrim($envUrl, '/');
+    }
+
     $scriptDir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/Horae/web')), '/');
     if ($scriptDir === '') {
         $scriptDir = '/';
     }
 
+    // Interne Chrome-fetch: plain HTTP op poort 80. Niet poort 443 (komt van HTTPS-requests).
+    $port = (int) (getenv('HORAE_PDF_EXPORT_PORT') ?: 80);
+    if ($port <= 0 || $port === 443) {
+        $port = 80;
+    }
+
     return 'http://127.0.0.1' . ($port !== 80 ? ':' . $port : '') . $scriptDir;
+}
+
+/** null = file:// (standaard op server, geen Apache/SSL). string = HTTP via pdf_export_view.php */
+function pdf_resolve_export_base_url(): ?string
+{
+    $mode = strtolower(trim((string) getenv('HORAE_PDF_EXPORT_MODE')));
+    if ($mode === 'http') {
+        return pdf_export_base_url();
+    }
+
+    return null;
 }
 
 function pdf_inject_base_href(string $html, string $baseHref): string
