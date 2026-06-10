@@ -238,8 +238,8 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     td.editable-cell.has-override,
     span.editable-cell.has-override {
       box-shadow:
-        inset 0 0 10px 2px rgba(255, 130, 0, 0.42),
-        inset 0 0 18px 6px rgba(255, 160, 0, 0.18);
+        inset 0 0 10px 2px rgba(22, 163, 74, 0.42),
+        inset 0 0 18px 6px rgba(74, 222, 128, 0.18);
     }
 
     td.editable-cell,
@@ -314,10 +314,10 @@ $timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $re
     }
 
     .hours tbody tr.person-row.row-added td {
-      background-color: #fff7ed;
+      background-color: #f0fdf4;
       box-shadow:
-        inset 0 0 10px 2px rgba(255, 130, 0, 0.42),
-        inset 0 0 18px 6px rgba(255, 160, 0, 0.18);
+        inset 0 0 10px 2px rgba(22, 163, 74, 0.42),
+        inset 0 0 18px 6px rgba(74, 222, 128, 0.18);
     }
 
     tr.row-deleted td {
