@@ -464,7 +464,7 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
 
         <div class="list" id="weekList">
           <?php if (count($items) === 0): ?>
-            <div class="hint">Geen gegevens over weken gevonden voor de geselecteerde projecten.</div>
+            <div class="hint">Geen BC-weken gevonden voor de geselecteerde projecten. Klik op <b>Nieuwe week</b> om een Horae-week aan te maken.</div>
           <?php endif; ?>
 
           <?php $first = true; ?>

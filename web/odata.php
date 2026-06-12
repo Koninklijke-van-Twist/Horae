@@ -1422,6 +1422,142 @@ function projects_ensure_rows(string $projUrl, array $auth, string $cacheKey, in
     ];
 }
 
+function projects_odata_escape(string $value): string
+{
+    return str_replace("'", "''", $value);
+}
+
+/** @return list<array<string,mixed>> */
+function projects_query_app_projecten(string $base, array $auth, string $filter, int $top = 100): array
+{
+    $url = $base . "AppProjecten?\$select=No,Description&\$filter="
+        . rawurlencode($filter)
+        . "&\$orderby=No&\$top=" . max(1, $top)
+        . "&\$format=json";
+
+    return odata_get_all($url, $auth);
+}
+
+/** @return list<array<string,mixed>> */
+function projects_merge_rows(array $existing, array $add): array
+{
+    $seen = [];
+    foreach ($existing as $row) {
+        $no = (string) ($row['No'] ?? '');
+        if ($no !== '') {
+            $seen[$no] = true;
+        }
+    }
+
+    foreach ($add as $row) {
+        $no = (string) ($row['No'] ?? '');
+        if ($no === '' || isset($seen[$no])) {
+            continue;
+        }
+        $seen[$no] = true;
+        $existing[] = $row;
+    }
+
+    return $existing;
+}
+
+/** @return list<array<string,mixed>> */
+function projects_query_job_card(string $base, array $auth, string $filter, int $top = 25): array
+{
+    $url = $base . "JobCard?\$select=No,Description,Sell_to_Address&\$filter="
+        . rawurlencode($filter)
+        . "&\$orderby=No&\$top=" . max(1, $top)
+        . "&\$format=json";
+
+    $raw = odata_get_all($url, $auth);
+    $rows = [];
+    foreach ($raw as $item) {
+        $no = (string) ($item['No'] ?? '');
+        if ($no === '') {
+            continue;
+        }
+        $desc = trim((string) ($item['Description'] ?? ''));
+        if ($desc === '') {
+            $desc = trim((string) ($item['Sell_to_Address'] ?? ''));
+        }
+        $rows[] = [
+            'No' => $no,
+            'Description' => $desc,
+        ];
+    }
+
+    return $rows;
+}
+
+/** Zoek projecten in BC AppProjecten — ook zonder urenstaten/weken. */
+function projects_search_rows(string $base, array $auth, string $query): array
+{
+    $query = trim($query);
+    if ($query === '') {
+        return [];
+    }
+
+    $rows = [];
+    $escaped = projects_odata_escape($query);
+    $attempts = array_values(array_unique(array_filter([
+        $query,
+        strtoupper($query),
+        $query !== strtoupper($query) ? strtolower($query) : '',
+    ], fn($v) => $v !== '')));
+
+    foreach ($attempts as $candidate) {
+        try {
+            $exact = projects_odata_escape($candidate);
+            $found = projects_query_app_projecten($base, $auth, "No eq '{$exact}'", 1);
+            $rows = projects_merge_rows($rows, $found);
+        } catch (Throwable $e) {
+            // volgende poging
+        }
+    }
+
+    try {
+        $found = projects_query_app_projecten(
+            $base,
+            $auth,
+            "startswith(No,'{$escaped}') or startswith(Description,'{$escaped}')",
+            100
+        );
+        $rows = projects_merge_rows($rows, $found);
+    } catch (Throwable $e) {
+        // startswith kan ontbreken op oudere BC; negeren
+    }
+
+    try {
+        $found = projects_query_app_projecten($base, $auth, "contains(Description,'{$escaped}')", 100);
+        $rows = projects_merge_rows($rows, $found);
+    } catch (Throwable $e) {
+        // contains op Description optioneel
+    }
+
+    foreach ($attempts as $candidate) {
+        try {
+            $exact = projects_odata_escape($candidate);
+            $found = projects_query_job_card($base, $auth, "No eq '{$exact}'", 1);
+            $rows = projects_merge_rows($rows, $found);
+        } catch (Throwable $e) {
+            // volgende poging
+        }
+    }
+
+    if (count($rows) === 0) {
+        try {
+            $found = projects_query_job_card($base, $auth, "startswith(No,'{$escaped}')", 25);
+            $rows = projects_merge_rows($rows, $found);
+        } catch (Throwable $e) {
+            // negeren
+        }
+    }
+
+    usort($rows, fn($a, $b) => strcmp((string) ($a['No'] ?? ''), (string) ($b['No'] ?? '')));
+
+    return $rows;
+}
+
 function odata_send_projects_batch_json(): void
 {
     require __DIR__ . '/auth.php';
@@ -1490,6 +1626,38 @@ function odata_send_projects_batch_json(): void
     exit;
 }
 
+function odata_send_projects_search_json(): void
+{
+    require __DIR__ . '/auth.php';
+
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+
+    $query = trim((string) ($_GET['q'] ?? ''));
+    if ($query === '') {
+        echo json_encode(['ok' => true, 'rows' => [], 'q' => ''], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
+    try {
+        global $base, $auth;
+        $rows = projects_search_rows($base, $auth, $query);
+
+        echo json_encode([
+            'ok' => true,
+            'rows' => $rows,
+            'q' => $query,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode([
+            'ok' => false,
+            'error' => $e->getMessage(),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+    exit;
+}
+
 $odataAction = (string) ($_GET['action'] ?? '');
 if (odata_is_direct_request() && $odataAction === 'cache_status') {
     odata_send_cache_status_json();
@@ -1502,6 +1670,9 @@ if (odata_is_direct_request() && $odataAction === 'cache_clear') {
 }
 if (odata_is_direct_request() && $odataAction === 'projects_batch') {
     odata_send_projects_batch_json();
+}
+if (odata_is_direct_request() && $odataAction === 'projects_search') {
+    odata_send_projects_search_json();
 }
 if (odata_is_direct_request() && in_array($odataAction, ['override_get', 'override_save', 'override_create_week', 'override_delete_week', 'override_row_add', 'override_row_delete', 'override_row_restore'], true)) {
     require __DIR__ . '/overrides.php';

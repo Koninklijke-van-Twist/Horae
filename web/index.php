@@ -116,8 +116,21 @@ require __DIR__ . "/logincheck.php";
       white-space: nowrap;
     }
 
-    .btn:hover {
-      filter: brightness(.98);
+    .item-sub.manual-note {
+      color: #b45309;
+      font-weight: 600;
+    }
+
+    .manual-add {
+      margin-top: 10px;
+      padding: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 12px;
+      background: #fffbeb;
+    }
+
+    .manual-add button {
+      margin-top: 8px;
     }
 
     .btn:active {
@@ -267,7 +280,7 @@ require __DIR__ . "/logincheck.php";
       </div>
 
       <h1>Projectselectie</h1>
-      <p class="subtitle">Vink één of meerdere projecten aan om beschikbare weken te bekijken.</p>
+      <p class="subtitle">Vink één of meerdere projecten aan. Staat een project (nog) niet in de lijst? Zoek op nummer of voeg het handmatig toe.</p>
 
       <div class="progress-wrap" id="loadProgressWrap">
         <div class="progress-bar">
@@ -299,6 +312,192 @@ require __DIR__ . "/logincheck.php";
   <script>
     const BATCH_SIZE = 200;
     let allProjects = [];
+    let serverSearchResults = null;
+    let serverSearchQuery = '';
+    let serverSearchLoading = false;
+    let searchDebounceTimer = null;
+    let manualProjects = {};
+    let checkedProjects = new Set();
+
+    function projectMatchesQuery (project, queryLower)
+    {
+      const no = String(project.No || '').toLowerCase();
+      const desc = String(project.Description || '').toLowerCase();
+      return no.includes(queryLower) || desc.includes(queryLower);
+    }
+
+    function captureCheckedProjects ()
+    {
+      document.querySelectorAll('input[name="projectNo[]"]:checked').forEach(cb =>
+      {
+        if (cb.value) checkedProjects.add(cb.value);
+      });
+    }
+
+    function buildProjectItemHtml (project, manual)
+    {
+      const no = String(project.No || '');
+      const desc = String(project.Description || '');
+      const searchBlob = (no + ' ' + desc + (manual ? ' handmatig' : '')).toLowerCase();
+      const checked = checkedProjects.has(no) ? ' checked' : '';
+      const manualNote = manual
+        ? '<div class="item-sub manual-note">Handmatig toegevoegd · nog geen BC-weken nodig voor selectie</div>'
+        : '<div class="item-sub">' + escapeHtml(desc) + '</div>';
+
+      return '<label class="item" data-search="' + escapeHtml(searchBlob) + '">'
+        + '<input type="checkbox" name="projectNo[]" value="' + escapeHtml(no) + '"' + checked + '>'
+        + '<div>'
+        + '<div class="item-title">' + escapeHtml(no) + (manual ? ' · handmatig' : '') + '</div>'
+        + manualNote
+        + '</div>'
+        + '</label>';
+    }
+
+    function collectVisibleProjects ()
+    {
+      const q = (document.getElementById('projectSearch').value || '').trim();
+      const qLower = q.toLowerCase();
+      let rows = [];
+
+      if (q.length >= 1 && serverSearchResults !== null)
+      {
+        rows = serverSearchResults.slice();
+      }
+      else if (qLower === '')
+      {
+        rows = allProjects.slice();
+      }
+      else
+      {
+        rows = allProjects.filter(p => projectMatchesQuery(p, qLower));
+      }
+
+      const seen = new Set(rows.map(p => String(p.No || '')));
+      Object.values(manualProjects).forEach(p =>
+      {
+        const no = String(p.No || '');
+        if (no === '' || seen.has(no)) return;
+        if (qLower === '' || projectMatchesQuery(p, qLower)) {
+          rows.push(p);
+          seen.add(no);
+        }
+      });
+
+      rows.sort((a, b) => String(a.No || '').localeCompare(String(b.No || ''), undefined, { numeric: true }));
+      return { rows, q, qLower };
+    }
+
+    function renderProjectList ()
+    {
+      captureCheckedProjects();
+      const list = document.getElementById('projectList');
+      const { rows, q, qLower } = collectVisibleProjects();
+
+      if (serverSearchLoading)
+      {
+        list.innerHTML = '<div class="hint">Zoeken in Business Central…</div>';
+        updateProjectCount();
+        return;
+      }
+
+      if (allProjects.length === 0 && q === '')
+      {
+        list.innerHTML = '<div class="hint">Geen projecten gevonden.</div>';
+        updateProjectCount();
+        return;
+      }
+
+      let html = '';
+      if (rows.length === 0)
+      {
+        html += '<div class="hint">Geen project in Business Central gevonden voor "' + escapeHtml(q) + '".</div>';
+        html += '<div class="manual-add">'
+          + '<div class="hint">Staat het project wél in BC onder een ander nummer? Probeer exact dat nummer. Anders kun je het projectnummer handmatig kiezen voor een Horae-week.</div>'
+          + '<button class="btn" type="button" onclick="addManualProject()">Project "' + escapeHtml(q) + '" toevoegen</button>'
+          + '</div>';
+      }
+      else
+      {
+        for (const p of rows)
+        {
+          const no = String(p.No || '');
+          html += buildProjectItemHtml(p, !!manualProjects[no]);
+        }
+      }
+
+      list.innerHTML = html;
+      updateProjectCount();
+    }
+
+    function renderProjects ()
+    {
+      renderProjectList();
+    }
+
+    function addManualProject (value)
+    {
+      const no = String(value ?? document.getElementById('projectSearch').value ?? '').trim();
+      if (no === '')
+      {
+        alert('Voer eerst een projectnummer in.');
+        return;
+      }
+      manualProjects[no] = { No: no, Description: '', manual: true };
+      checkedProjects.add(no);
+      serverSearchResults = serverSearchResults || [];
+      if (!serverSearchResults.some(p => String(p.No || '') === no))
+      {
+        serverSearchResults.unshift(manualProjects[no]);
+      }
+      renderProjectList();
+    }
+
+    async function runServerProjectSearch (query)
+    {
+      serverSearchLoading = true;
+      serverSearchQuery = query;
+      renderProjectList();
+
+      try
+      {
+        const response = await fetch('odata.php?action=projects_search&q=' + encodeURIComponent(query), {
+          headers: { 'Accept': 'application/json' },
+          credentials: 'same-origin',
+          cache: 'no-store'
+        });
+        const raw = await response.text();
+        const payload = JSON.parse(raw);
+        if (!response.ok || !payload.ok)
+        {
+          throw new Error((payload && payload.error) || 'Zoeken mislukt');
+        }
+
+        if ((document.getElementById('projectSearch').value || '').trim() !== query)
+        {
+          return;
+        }
+
+        serverSearchResults = Array.isArray(payload.rows) ? payload.rows : [];
+      }
+      catch (error)
+      {
+        console.error(error);
+        serverSearchResults = [];
+        if ((document.getElementById('projectSearch').value || '').trim() === query)
+        {
+          const list = document.getElementById('projectList');
+          list.innerHTML = '<div class="hint">Zoeken mislukt: ' + escapeHtml(error.message || 'onbekende fout') + '</div>';
+        }
+      }
+      finally
+      {
+        serverSearchLoading = false;
+        if ((document.getElementById('projectSearch').value || '').trim() === query)
+        {
+          renderProjectList();
+        }
+      }
+    }
 
     function escapeHtml (value)
     {
@@ -360,33 +559,6 @@ require __DIR__ . "/logincheck.php";
       {
         label.textContent = 'Projecten laden… ' + loaded + ' opgehaald';
       }
-    }
-
-    function renderProjects ()
-    {
-      const list = document.getElementById('projectList');
-      if (allProjects.length === 0)
-      {
-        list.innerHTML = '<div class="hint">Geen projecten gevonden.</div>';
-        return;
-      }
-
-      let html = '';
-      for (const p of allProjects)
-      {
-        const no = String(p.No || '');
-        const desc = String(p.Description || '');
-        const searchBlob = (no + ' ' + desc).toLowerCase();
-        html += '<label class="item" data-search="' + escapeHtml(searchBlob) + '">'
-          + '<input type="checkbox" name="projectNo[]" value="' + escapeHtml(no) + '">'
-          + '<div>'
-          + '<div class="item-title">' + escapeHtml(no) + '</div>'
-          + '<div class="item-sub">' + escapeHtml(desc) + '</div>'
-          + '</div>'
-          + '</label>';
-      }
-      list.innerHTML = html;
-      updateProjectCount();
     }
 
     function setInteractiveEnabled (enabled)
@@ -470,19 +642,28 @@ require __DIR__ . "/logincheck.php";
     }
     function filterProjects ()
     {
-      const q = (document.getElementById('projectSearch').value || '').trim().toLowerCase();
-      document.querySelectorAll('#projectList .item').forEach(el =>
+      const q = (document.getElementById('projectSearch').value || '').trim();
+      clearTimeout(searchDebounceTimer);
+
+      if (q.length >= 1)
       {
-        const blob = (el.dataset.search || '');
-        el.style.display = (q === '' || blob.includes(q)) ? '' : 'none';
-      });
-      updateProjectCount();
+        searchDebounceTimer = setTimeout(() =>
+        {
+          serverSearchResults = null;
+          runServerProjectSearch(q);
+        }, 250);
+        return;
+      }
+
+      serverSearchResults = null;
+      serverSearchLoading = false;
+      renderProjectList();
     }
     function updateProjectCount ()
     {
       const boxes = [...document.querySelectorAll('input[name="projectNo[]"]')];
       const checked = boxes.filter(b => b.checked).length;
-      const visible = [...document.querySelectorAll('#projectList .item')].filter(el => el.style.display !== 'none').length;
+      const visible = boxes.length;
       document.getElementById('projCountHint').textContent = `${checked} geselecteerd · ${visible} zichtbaar`;
     }
     document.addEventListener('change', (e) =>
