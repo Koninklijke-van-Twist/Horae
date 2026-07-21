@@ -22,72 +22,129 @@ function odata_or_filter(string $field, array $values): string
   return rawurlencode(implode(" or ", $parts));
 }
 
-// 1) Urenstaten binnen deze projecten (headers)
-$tsFilter = odata_or_filter("Job_No_Filter", $projectNos);
-$url = $base . "Urenstaten?\$select=No,Starting_Date,Ending_Date,Description,Job_No_Filter&\$filter={$tsFilter}&\$format=json";
-$timesheets = odata_get_all($url, $auth);
+function weeks_extract_week_no(string $desc): int
+{
+  if (preg_match('/\bWeek\s*(\d+)\b/i', $desc, $m)) {
+    return (int) $m[1];
+  }
+  return 0;
+}
 
-// 2) Welke Time_Sheet_No's hebben regels binnen deze projecten?
-$rulesFilter = odata_or_filter("Job_No", $projectNos);
-// Work_Type_Code ne 'KM' erachter (niet encoden, want filter is al encoded -> dus combineren vóór rawurlencode)
-$rulesFilterDecoded = implode(" or ", array_map(fn($p) => "Job_No eq '" . str_replace("'", "''", $p) . "'", $projectNos));
-$rulesFilterDecoded = "(" . $rulesFilterDecoded . ") and Work_Type_Code ne 'KM'";
+function weeks_extract_year(string $end): int
+{
+  if (preg_match('/^(\d{4})-\d{2}-\d{2}$/', $end, $m)) {
+    return (int) $m[1];
+  }
+  return 0;
+}
+
+$weeksDebug = [
+  'projects' => $projectNos,
+  'rulesError' => null,
+  'rulesCount' => 0,
+  'timesheetsViaJobNoFilter' => 0,
+  'timesheetsViaRules' => 0,
+  'timesheetsMerged' => 0,
+  'itemsWithoutRules' => 0,
+];
+
+// 1) Primaire bron: Urenstaatregels.Job_No (betrouwbaarder dan Job_No_Filter)
+$rulesFilterDecoded = implode(' or ', array_map(
+  fn($p) => "Job_No eq '" . str_replace("'", "''", $p) . "'",
+  $projectNos
+));
+$rulesFilterDecoded = '(' . $rulesFilterDecoded . ") and Work_Type_Code ne 'KM'";
 $rulesFilter = rawurlencode($rulesFilterDecoded);
-
 $rulesUrl = $base . "Urenstaatregels?\$select=Time_Sheet_No,Job_No&\$filter={$rulesFilter}&\$format=json";
 $rules = [];
 
 try {
   $rules = odata_get_all($rulesUrl, $auth);
 } catch (\Throwable $th) {
-  //throw $th;
+  $weeksDebug['rulesError'] = $th->getMessage();
 }
 
 $hasRulesForTs = [];
-$tsToProject = []; // Time_Sheet_No -> Job_No (handig voor later)
-foreach ($rules as $k => $r) {
+$tsToProject = []; // Time_Sheet_No -> Job_No uit regels
+foreach ($rules as $r) {
   $tsNo = (string) ($r['Time_Sheet_No'] ?? '');
   $jno = (string) ($r['Job_No'] ?? '');
-
-  if (!in_array($jno, $projectNos)) {
-    unset($rules[$k]);
+  if ($tsNo === '' || $jno === '' || !in_array($jno, $projectNos, true)) {
     continue;
   }
-  if ($tsNo !== '') {
-    $hasRulesForTs[$tsNo] = true;
-    if ($jno !== '' && !isset($tsToProject[$tsNo]))
-      $tsToProject[$tsNo] = $jno;
+  $hasRulesForTs[$tsNo] = true;
+  if (!isset($tsToProject[$tsNo])) {
+    $tsToProject[$tsNo] = $jno;
   }
 }
+$weeksDebug['rulesCount'] = count($hasRulesForTs);
 
-// 3) Filter urenstaten zonder regels weg
-$timesheets = array_values(array_filter($timesheets, function ($t) use ($hasRulesForTs) {
+// 2) Urenstaat-headers via Job_No_Filter (aanvullend)
+$tsFilter = odata_or_filter('Job_No_Filter', $projectNos);
+$url = $base . "Urenstaten?\$select=No,Starting_Date,Ending_Date,Description,Job_No_Filter&\$filter={$tsFilter}&\$format=json";
+$timesheetsByNo = [];
+foreach (odata_get_all($url, $auth) as $t) {
   $no = (string) ($t['No'] ?? '');
-  return $no !== '' && isset($hasRulesForTs[$no]);
-}));
-
-// 4) Weeknummer uit Description
-$items = [];
-foreach ($timesheets as $t) {
-  $desc = $t['Description'] ?? '';
-  if (preg_match('/\bWeek\s*(\d+)\b/i', $desc, $m)) {
-    $w = (int) $m[1];
-    $tsNo = (string) ($t['No'] ?? '');
-    $end = (string) ($t['Ending_Date'] ?? '');
-    $year = 0;
-    if (preg_match('/^(\d{4})-\d{2}-\d{2}$/', $end, $m)) {
-      $year = (int) $m[1];
-    }
-    $items[] = [
-      'week' => $w,
-      'year' => $year,
-      'tsNo' => $tsNo,
-      'start' => $t['Starting_Date'] ?? null,
-      'end' => $end,
-      'desc' => $desc,
-      'projectNo' => (string) ($tsToProject[$tsNo] ?? ''),
-    ];
+  if ($no === '') {
+    continue;
   }
+  $timesheetsByNo[$no] = $t;
+  if (!isset($tsToProject[$no])) {
+    $filterProj = (string) ($t['Job_No_Filter'] ?? '');
+    if ($filterProj !== '' && in_array($filterProj, $projectNos, true)) {
+      $tsToProject[$no] = $filterProj;
+    }
+  }
+}
+$weeksDebug['timesheetsViaJobNoFilter'] = count($timesheetsByNo);
+
+// 3) Headers ophalen voor urenstaten die wel in regels staan maar niet via Job_No_Filter
+$missingTsNos = array_values(array_diff(array_keys($hasRulesForTs), array_keys($timesheetsByNo)));
+$weeksDebug['timesheetsViaRules'] = count($missingTsNos);
+if (count($missingTsNos) > 0) {
+  $chunkSize = 20;
+  for ($i = 0; $i < count($missingTsNos); $i += $chunkSize) {
+    $chunk = array_slice($missingTsNos, $i, $chunkSize);
+    $tsNoFilter = odata_or_filter('No', $chunk);
+    $extraUrl = $base . "Urenstaten?\$select=No,Starting_Date,Ending_Date,Description,Job_No_Filter&\$filter={$tsNoFilter}&\$format=json";
+    try {
+      foreach (odata_get_all($extraUrl, $auth) as $t) {
+        $no = (string) ($t['No'] ?? '');
+        if ($no !== '') {
+          $timesheetsByNo[$no] = $t;
+        }
+      }
+    } catch (\Throwable $th) {
+      $weeksDebug['rulesError'] = trim(($weeksDebug['rulesError'] ?? '') . "\nExtra Urenstaten-fetch: " . $th->getMessage());
+    }
+  }
+}
+$weeksDebug['timesheetsMerged'] = count($timesheetsByNo);
+
+// 4) Weekitems opbouwen — urenstaten zonder regels blijven zichtbaar met waarschuwing
+$items = [];
+foreach ($timesheetsByNo as $t) {
+  $tsNo = (string) ($t['No'] ?? '');
+  $desc = (string) ($t['Description'] ?? '');
+  $w = weeks_extract_week_no($desc);
+  if ($w <= 0) {
+    continue;
+  }
+  $end = (string) ($t['Ending_Date'] ?? '');
+  $hasRules = isset($hasRulesForTs[$tsNo]);
+  if (!$hasRules) {
+    $weeksDebug['itemsWithoutRules']++;
+  }
+  $items[] = [
+    'week' => $w,
+    'year' => weeks_extract_year($end),
+    'tsNo' => $tsNo,
+    'start' => $t['Starting_Date'] ?? null,
+    'end' => $end,
+    'desc' => $desc,
+    'projectNo' => (string) ($tsToProject[$tsNo] ?? ($t['Job_No_Filter'] ?? '')),
+    'hasRules' => $hasRules,
+  ];
 }
 
 $overrideItems = overrides_list_for_projects($projectNos);
@@ -350,6 +407,21 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
       font-weight: 700;
     }
 
+    .badge-warn {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: #fef3c7;
+      color: #92400e;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .item-warn .item-title {
+      color: #92400e;
+    }
+
     .progress-wrap {
       margin: 0 0 14px;
       display: none;
@@ -484,12 +556,18 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
               $sub = trim((string) ($it['start'] ?? '')) . " – " . trim((string) ($it['end'] ?? ''));
               $proj = (string) ($it['projectNo'] ?? '');
               $isHoraeOnly = !empty($it['isOverrideOnly']);
-              $searchBlob = strtolower($label . " " . $sub . " " . $proj . " " . ($it['desc'] ?? '') . " " . ($it['tsNo'] ?? '') . " horae");
+              $hasRules = !empty($it['hasRules']) || $isHoraeOnly;
+              $warnTitle = $hasRules ? '' : 'Geen urenregels (niet-KM) gevonden voor dit project op deze urenstaat';
+              $searchBlob = strtolower($label . " " . $sub . " " . $proj . " " . ($it['desc'] ?? '') . " " . ($it['tsNo'] ?? '') . " horae" . ($hasRules ? '' : ' waarschuwing'));
               ?>
-              <label class="item" data-search="<?= htmlspecialchars($searchBlob) ?>">
+              <label class="item<?= $hasRules ? '' : ' item-warn' ?>" data-search="<?= htmlspecialchars($searchBlob) ?>"<?= $warnTitle !== '' ? ' title="' . htmlspecialchars($warnTitle) . '"' : '' ?>>
                 <input type="checkbox" name="tsNo[]" value="<?= htmlspecialchars($it['tsNo']) ?>">
                 <div>
-                  <div class="item-title"><?= htmlspecialchars($label) ?> · <?= htmlspecialchars($proj) ?><?php if ($isHoraeOnly): ?><span class="badge-horae">Horae</span><?php endif; ?></div>
+                  <div class="item-title">
+                    <?= htmlspecialchars($label) ?> · <?= htmlspecialchars($proj) ?>
+                    <?php if ($isHoraeOnly): ?><span class="badge-horae">Horae</span><?php endif; ?>
+                    <?php if (!$hasRules): ?><span class="badge-warn" title="<?= htmlspecialchars($warnTitle) ?>">⚠️ geen regels</span><?php endif; ?>
+                  </div>
                   <div class="item-sub">(<?= htmlspecialchars($sub) ?>)</div>
                 </div>
               </label>
@@ -530,6 +608,15 @@ usort($items, fn($a, $b) => ($a['week'] <=> $b['week']) ?: strcmp($a['projectNo'
 
   <script>
     const selectedProjects = <?= json_encode(array_values($projectNos), JSON_UNESCAPED_UNICODE) ?>;
+    const weeksDebug = <?= json_encode($weeksDebug, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    if (weeksDebug) {
+      console.groupCollapsed('[Horae] Weekdetectie');
+      console.log(weeksDebug);
+      if (weeksDebug.rulesError) {
+        console.error('[Horae] Urenstaatregels OData-fout:', weeksDebug.rulesError);
+      }
+      console.groupEnd();
+    }
     function toggleAll (on)
     {
       document.querySelectorAll('input[type="checkbox"][name="tsNo[]"]').forEach(cb => cb.checked = on);

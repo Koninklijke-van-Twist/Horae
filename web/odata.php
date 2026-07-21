@@ -1558,6 +1558,148 @@ function projects_search_rows(string $base, array $auth, string $query): array
     return $rows;
 }
 
+function projects_nightly_ttl(): int
+{
+    return 86400; // 24 uur, of tot volgende nightly-overwrite
+}
+
+function projects_nightly_cache_path(): string
+{
+    require __DIR__ . '/auth.php';
+    // auth.php in een functie → $environment is lokaal, niet via global
+    $env = preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) ($environment ?? 'default'));
+    if ($env === '') {
+        $env = 'default';
+    }
+    return cache_base_dir() . '/projects_nightly_' . $env . '.json';
+}
+
+/** @return list<array{No:string,Description:string}> */
+function projects_normalize_rows(array $rows): array
+{
+    $out = [];
+    $seen = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $no = trim((string) ($row['No'] ?? ''));
+        if ($no === '' || isset($seen[$no])) {
+            continue;
+        }
+        $seen[$no] = true;
+        $out[] = [
+            'No' => $no,
+            'Description' => (string) ($row['Description'] ?? ''),
+        ];
+    }
+
+    usort($out, fn($a, $b) => strcmp($a['No'], $b['No']));
+    return $out;
+}
+
+/**
+ * Haalt alle AppProjecten op en schrijft de nightly-cache (24u).
+ * @return array{ok:bool,count:int,path:string,cached_at:int,expires_at:int,source_url:string}
+ */
+function projects_nightly_refresh(string $base, array $auth): array
+{
+    $sourceUrl = $base . "AppProjecten?\$select=No,Description&\$orderby=No&\$format=json";
+    // Forceer verse BC-data: bestaande OData-hashcache voor deze URL weggooien
+    $hashPath = cache_path_for_key(build_cache_key($sourceUrl, $auth));
+    if (is_file($hashPath)) {
+        @unlink($hashPath);
+    }
+    $raw = odata_get_all($sourceUrl, $auth, 1);
+    $rows = projects_normalize_rows($raw);
+    $path = projects_nightly_cache_path();
+    $ttl = projects_nightly_ttl();
+    write_cache_json($path, $rows, $ttl, $sourceUrl);
+
+    $now = time();
+    return [
+        'ok' => true,
+        'count' => count($rows),
+        'path' => $path,
+        'cached_at' => $now,
+        'expires_at' => $now + $ttl,
+        'source_url' => $sourceUrl,
+    ];
+}
+
+/**
+ * @return array{valid:bool,rows:list<array{No:string,Description:string}>,cached_at:int,expires_at:int}
+ */
+function projects_nightly_read(bool $allowExpired = false): array
+{
+    $path = projects_nightly_cache_path();
+    if (!is_file($path)) {
+        return ['valid' => false, 'rows' => [], 'cached_at' => 0, 'expires_at' => 0];
+    }
+
+    $raw = @file_get_contents($path);
+    if ($raw === false || $raw === '') {
+        return ['valid' => false, 'rows' => [], 'cached_at' => 0, 'expires_at' => 0];
+    }
+
+    $payload = json_decode($raw, true);
+    if (!is_array($payload) || !isset($payload['data']) || !is_array($payload['data'])) {
+        return ['valid' => false, 'rows' => [], 'cached_at' => 0, 'expires_at' => 0];
+    }
+
+    $meta = is_array($payload['_meta'] ?? null) ? $payload['_meta'] : [];
+    $cachedAt = (int) ($meta['cached_at'] ?? 0);
+    $expiresAt = (int) ($meta['expires_at'] ?? 0);
+    $fresh = $expiresAt <= 0 || time() <= $expiresAt;
+    $rows = projects_normalize_rows($payload['data']);
+
+    if (!$fresh && !$allowExpired) {
+        return ['valid' => false, 'rows' => [], 'cached_at' => $cachedAt, 'expires_at' => $expiresAt];
+    }
+
+    if (count($rows) === 0) {
+        return ['valid' => false, 'rows' => [], 'cached_at' => $cachedAt, 'expires_at' => $expiresAt];
+    }
+
+    return [
+        'valid' => true,
+        'rows' => $rows,
+        'cached_at' => $cachedAt,
+        'expires_at' => $expiresAt,
+    ];
+}
+
+/** @return list<array{No:string,Description:string}> */
+function projects_filter_cached_rows(array $rows, string $query, int $limit = 200): array
+{
+    $query = trim($query);
+    if ($query === '') {
+        return array_slice($rows, 0, $limit);
+    }
+
+    $q = mb_strtolower($query);
+    $exact = [];
+    $prefix = [];
+    $contains = [];
+
+    foreach ($rows as $row) {
+        $no = (string) ($row['No'] ?? '');
+        $desc = (string) ($row['Description'] ?? '');
+        $noL = mb_strtolower($no);
+        $descL = mb_strtolower($desc);
+
+        if ($noL === $q) {
+            $exact[] = $row;
+        } elseif (str_starts_with($noL, $q) || str_starts_with($descL, $q)) {
+            $prefix[] = $row;
+        } elseif (str_contains($noL, $q) || str_contains($descL, $q)) {
+            $contains[] = $row;
+        }
+    }
+
+    return array_slice(array_merge($exact, $prefix, $contains), 0, $limit);
+}
+
 function odata_send_projects_batch_json(): void
 {
     require __DIR__ . '/auth.php';
@@ -1572,39 +1714,24 @@ function odata_send_projects_batch_json(): void
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
     $skip = max(0, (int) ($_GET['skip'] ?? 0));
-    $top = max(1, min(500, (int) ($_GET['top'] ?? 200)));
-    $halfDay = 3600 * 12;
+    $top = max(1, min(2000, (int) ($_GET['top'] ?? 500)));
 
     try {
-        $projUrl = $base . "AppProjecten?\$select=No,Description&\$orderby=No&\$format=json";
-        $cacheKey = build_cache_key($projUrl, $auth);
-        $cachePath = cache_path_for_key($cacheKey);
-        $cached = is_file($cachePath) ? read_cache_payload($cachePath, $halfDay) : ['valid' => false, 'data' => []];
+        // auth.php is hierboven ge-require'd → $base/$auth zijn lokaal beschikbaar
+        $nightly = projects_nightly_read(true);
 
-        if ($cached['valid']) {
-            $all = $cached['data'];
-            $slice = array_slice($all, $skip, $top);
-            echo json_encode([
-                'ok' => true,
-                'rows' => $slice,
-                'skip' => $skip,
-                'top' => $top,
-                'loaded' => $skip + count($slice),
-                'total' => count($all),
-                'done' => ($skip + count($slice)) >= count($all),
-                'cached' => true,
-            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            exit;
+        if (!$nightly['valid'] || count($nightly['rows']) === 0) {
+            // Eerste keer / lege cache: eenmalig vullen (zelfde als nightly)
+            if (!is_string($base) || $base === '' || !is_array($auth)) {
+                throw new RuntimeException('BC-auth/base ontbreekt voor projectcache-refresh');
+            }
+            projects_nightly_refresh($base, $auth);
+            $nightly = projects_nightly_read(true);
         }
 
-        $neededCount = $skip + $top;
-        $build = projects_ensure_rows($projUrl, $auth, $cacheKey, $neededCount, $top, $halfDay);
-        $allRows = $build['rows'];
-        $slice = array_slice($allRows, $skip, $top);
+        $all = $nightly['rows'];
+        $slice = array_slice($all, $skip, $top);
         $loaded = $skip + count($slice);
-        $complete = !empty($build['complete']);
-        $total = $complete ? count($allRows) : null;
-        $done = $complete && $loaded >= count($allRows);
 
         echo json_encode([
             'ok' => true,
@@ -1612,9 +1739,12 @@ function odata_send_projects_batch_json(): void
             'skip' => $skip,
             'top' => $top,
             'loaded' => $loaded,
-            'total' => $total,
-            'done' => $done,
-            'cached' => false,
+            'total' => count($all),
+            'done' => $loaded >= count($all),
+            'cached' => true,
+            'source' => 'nightly',
+            'cached_at' => $nightly['cached_at'],
+            'expires_at' => $nightly['expires_at'],
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     } catch (Throwable $e) {
         http_response_code(500);
@@ -1635,18 +1765,32 @@ function odata_send_projects_search_json(): void
 
     $query = trim((string) ($_GET['q'] ?? ''));
     if ($query === '') {
-        echo json_encode(['ok' => true, 'rows' => [], 'q' => ''], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        echo json_encode(['ok' => true, 'rows' => [], 'q' => '', 'source' => 'nightly'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         exit;
     }
 
     try {
-        global $base, $auth;
-        $rows = projects_search_rows($base, $auth, $query);
+        $nightly = projects_nightly_read(true);
+        $rows = projects_filter_cached_rows($nightly['rows'], $query, 200);
+
+        // Exacte miss in cache: optioneel live BC-lookup (project net aangemaakt)
+        if (count($rows) === 0) {
+            $rows = projects_search_rows($base, $auth, $query);
+            echo json_encode([
+                'ok' => true,
+                'rows' => $rows,
+                'q' => $query,
+                'source' => 'live',
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            exit;
+        }
 
         echo json_encode([
             'ok' => true,
             'rows' => $rows,
             'q' => $query,
+            'source' => 'nightly',
+            'cached_at' => $nightly['cached_at'],
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     } catch (Throwable $e) {
         http_response_code(500);

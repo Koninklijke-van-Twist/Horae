@@ -280,7 +280,7 @@ require __DIR__ . "/logincheck.php";
       </div>
 
       <h1>Projectselectie</h1>
-      <p class="subtitle">Vink één of meerdere projecten aan. Staat een project (nog) niet in de lijst? Zoek op nummer of voeg het handmatig toe.</p>
+      <p class="subtitle">Vink één of meerdere projecten aan (lijst uit AppProjecten, nachtelijke cache). Weken worden daarna uit urenstaatregels geladen.</p>
 
       <div class="progress-wrap" id="loadProgressWrap">
         <div class="progress-bar">
@@ -310,7 +310,7 @@ require __DIR__ . "/logincheck.php";
   </div>
 
   <script>
-    const BATCH_SIZE = 200;
+    const BATCH_SIZE = 1000;
     let allProjects = [];
     let serverSearchResults = null;
     let serverSearchQuery = '';
@@ -318,6 +318,7 @@ require __DIR__ . "/logincheck.php";
     let searchDebounceTimer = null;
     let manualProjects = {};
     let checkedProjects = new Set();
+    let projectsCacheMeta = { cached_at: 0, expires_at: 0, source: '' };
 
     function projectMatchesQuery (project, queryLower)
     {
@@ -359,13 +360,15 @@ require __DIR__ . "/logincheck.php";
       const qLower = q.toLowerCase();
       let rows = [];
 
-      if (q.length >= 1 && serverSearchResults !== null)
-      {
-        rows = serverSearchResults.slice();
-      }
-      else if (qLower === '')
+      // Zoeken gebeurt lokaal in de nightly AppProjecten-cache (volledige lijst).
+      // Server-search alleen als lokale miss + live fallback-resultaat.
+      if (qLower === '')
       {
         rows = allProjects.slice();
+      }
+      else if (serverSearchResults !== null && serverSearchQuery === q)
+      {
+        rows = serverSearchResults.slice();
       }
       else
       {
@@ -545,7 +548,13 @@ require __DIR__ . "/logincheck.php";
 
       if (done)
       {
-        label.textContent = loaded + ' projecten geladen';
+        let labelText = loaded + ' projecten geladen';
+        if (projectsCacheMeta.cached_at)
+        {
+          const d = new Date(projectsCacheMeta.cached_at * 1000);
+          labelText += ' (cache ' + d.toLocaleString('nl-NL') + ')';
+        }
+        label.textContent = labelText;
       }
       else if (waiting && loaded === 0)
       {
@@ -613,6 +622,9 @@ require __DIR__ . "/logincheck.php";
           {
             total = Number(payload.total);
           }
+          if (payload.cached_at) projectsCacheMeta.cached_at = Number(payload.cached_at);
+          if (payload.expires_at) projectsCacheMeta.expires_at = Number(payload.expires_at);
+          if (payload.source) projectsCacheMeta.source = String(payload.source);
           done = !!payload.done || rows.length === 0;
           setLoadingProgress(allProjects.length, total, done, false);
         }
@@ -644,20 +656,24 @@ require __DIR__ . "/logincheck.php";
     {
       const q = (document.getElementById('projectSearch').value || '').trim();
       clearTimeout(searchDebounceTimer);
-
-      if (q.length >= 1)
-      {
-        searchDebounceTimer = setTimeout(() =>
-        {
-          serverSearchResults = null;
-          runServerProjectSearch(q);
-        }, 250);
-        return;
-      }
-
       serverSearchResults = null;
       serverSearchLoading = false;
+
+      // Eerst lokaal filteren in de volledige AppProjecten-cache.
       renderProjectList();
+
+      // Alleen live BC-zoeken als lokale cache niets vindt (bijv. net nieuw project).
+      if (q.length >= 2)
+      {
+        const localHits = allProjects.filter(p => projectMatchesQuery(p, q.toLowerCase()));
+        if (localHits.length === 0)
+        {
+          searchDebounceTimer = setTimeout(() =>
+          {
+            runServerProjectSearch(q);
+          }, 300);
+        }
+      }
     }
     function updateProjectCount ()
     {
