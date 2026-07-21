@@ -1574,7 +1574,7 @@ function projects_nightly_cache_path(): string
     return cache_base_dir() . '/projects_nightly_' . $env . '.json';
 }
 
-/** @return list<array{No:string,Description:string}> */
+/** @return list<array<string,mixed>> */
 function projects_normalize_rows(array $rows): array
 {
     $out = [];
@@ -1588,30 +1588,198 @@ function projects_normalize_rows(array $rows): array
             continue;
         }
         $seen[$no] = true;
-        $out[] = [
-            'No' => $no,
-            'Description' => (string) ($row['Description'] ?? ''),
-        ];
+        $normalized = $row;
+        $normalized['No'] = $no;
+        $normalized['Description'] = (string) ($row['Description'] ?? '');
+        $out[] = $normalized;
     }
 
-    usort($out, fn($a, $b) => strcmp($a['No'], $b['No']));
+    usort($out, fn($a, $b) => strcmp((string) $a['No'], (string) $b['No']));
     return $out;
 }
 
+/** @return array<string,mixed>|null */
+function projects_nightly_get(string $projectNo): ?array
+{
+    $projectNo = trim($projectNo);
+    if ($projectNo === '') {
+        return null;
+    }
+    $nightly = projects_nightly_read(true);
+    foreach ($nightly['rows'] as $row) {
+        if ((string) ($row['No'] ?? '') === $projectNo) {
+            return $row;
+        }
+    }
+    return null;
+}
+
 /**
- * Haalt alle AppProjecten op en schrijft de nightly-cache (24u).
+ * @return array<string, array{start:?string,end:?string}>
+ */
+function projects_nightly_compute_hour_ranges(string $base, array $auth): array
+{
+    $tsUrl = $base . "Urenstaten?\$select=No,Starting_Date&\$format=json";
+    $tsHash = cache_path_for_key(build_cache_key($tsUrl, $auth));
+    if (is_file($tsHash)) {
+        @unlink($tsHash);
+    }
+    $timesheets = odata_get_all($tsUrl, $auth, 1);
+    $tsStart = [];
+    foreach ($timesheets as $ts) {
+        $no = (string) ($ts['No'] ?? '');
+        $start = (string) ($ts['Starting_Date'] ?? '');
+        if ($no !== '' && preg_match('/^\d{4}-\d{2}-\d{2}/', $start)) {
+            $tsStart[$no] = substr($start, 0, 10);
+        }
+    }
+
+    $rulesUrl = $base . "Urenstaatregels?\$select=Time_Sheet_No,Job_No,Field1,Field2,Field3,Field4,Field5,Field6,Field7&\$filter="
+        . rawurlencode("Work_Type_Code ne 'KM'")
+        . "&\$format=json";
+    $rulesHash = cache_path_for_key(build_cache_key($rulesUrl, $auth));
+    if (is_file($rulesHash)) {
+        @unlink($rulesHash);
+    }
+    $rules = odata_get_all($rulesUrl, $auth, 1);
+
+    $ranges = [];
+    foreach ($rules as $rule) {
+        $jobNo = trim((string) ($rule['Job_No'] ?? ''));
+        $tsNo = (string) ($rule['Time_Sheet_No'] ?? '');
+        if ($jobNo === '' || $tsNo === '' || !isset($tsStart[$tsNo])) {
+            continue;
+        }
+        $weekStart = $tsStart[$tsNo];
+        $baseTs = strtotime($weekStart . ' 12:00:00');
+        if ($baseTs === false) {
+            continue;
+        }
+        for ($i = 1; $i <= 7; $i++) {
+            $hours = (float) ($rule['Field' . $i] ?? 0);
+            if (abs($hours) < 0.00001) {
+                continue;
+            }
+            $day = date('Y-m-d', $baseTs + (($i - 1) * 86400));
+            if (!isset($ranges[$jobNo])) {
+                $ranges[$jobNo] = ['start' => $day, 'end' => $day];
+                continue;
+            }
+            if ($day < $ranges[$jobNo]['start']) {
+                $ranges[$jobNo]['start'] = $day;
+            }
+            if ($day > $ranges[$jobNo]['end']) {
+                $ranges[$jobNo]['end'] = $day;
+            }
+        }
+    }
+
+    return $ranges;
+}
+
+/**
+ * Haalt AppProjecten + servicelocatie + urenbereik op en schrijft de nightly-cache (24u).
+ * Servicelocatie = LVS_MainEntityCard via AppProjecten.LVS_Main_Entity (No).
  * @return array{ok:bool,count:int,path:string,cached_at:int,expires_at:int,source_url:string}
  */
 function projects_nightly_refresh(string $base, array $auth): array
 {
-    $sourceUrl = $base . "AppProjecten?\$select=No,Description&\$orderby=No&\$format=json";
-    // Forceer verse BC-data: bestaande OData-hashcache voor deze URL weggooien
+    $sourceUrl = $base . "AppProjecten?\$select=No,Description,Your_Reference,LVS_Bill_to_Name,LVS_Main_Entity,LVS_Main_Entity_Description,LVS_Job_Location&\$orderby=No&\$format=json";
     $hashPath = cache_path_for_key(build_cache_key($sourceUrl, $auth));
     if (is_file($hashPath)) {
         @unlink($hashPath);
     }
-    $raw = odata_get_all($sourceUrl, $auth, 1);
-    $rows = projects_normalize_rows($raw);
+    $projects = odata_get_all($sourceUrl, $auth, 1);
+
+    $entityUrl = $base . "LVS_MainEntityCard?\$select=No,Description,KVT_Customer_Description,KVT_Address,KVT_Address_2,KVT_Post_Code,KVT_City&\$format=json";
+    $entityHash = cache_path_for_key(build_cache_key($entityUrl, $auth));
+    if (is_file($entityHash)) {
+        @unlink($entityHash);
+    }
+    $entities = [];
+    try {
+        foreach (odata_get_all($entityUrl, $auth, 1) as $entity) {
+            $no = trim((string) ($entity['No'] ?? ''));
+            if ($no !== '') {
+                $entities[$no] = $entity;
+            }
+        }
+    } catch (Throwable $e) {
+        // Servicelocatie-tabel optioneel; projecten blijven bruikbaar zonder
+    }
+
+    $jobUrl = $base . "JobCard?\$select=No,Sell_to_Address,Sell_to_Post_Code,Sell_to_City,LVS_Bill_to_Name,Bill_to_Name&\$format=json";
+    $jobHash = cache_path_for_key(build_cache_key($jobUrl, $auth));
+    if (is_file($jobHash)) {
+        @unlink($jobHash);
+    }
+    $jobs = [];
+    try {
+        foreach (odata_get_all($jobUrl, $auth, 1) as $job) {
+            $no = trim((string) ($job['No'] ?? ''));
+            if ($no !== '') {
+                $jobs[$no] = $job;
+            }
+        }
+    } catch (Throwable $e) {
+        // JobCard optioneel
+    }
+
+    $hourRanges = [];
+    try {
+        $hourRanges = projects_nightly_compute_hour_ranges($base, $auth);
+    } catch (Throwable $e) {
+        $hourRanges = [];
+    }
+
+    $rows = [];
+    foreach ($projects as $project) {
+        $no = trim((string) ($project['No'] ?? ''));
+        if ($no === '') {
+            continue;
+        }
+        $mainEntityNo = trim((string) ($project['LVS_Main_Entity'] ?? ''));
+        if ($mainEntityNo === '') {
+            $mainEntityNo = trim((string) ($project['LVS_Job_Location'] ?? ''));
+        }
+        $entity = $entities[$mainEntityNo] ?? [];
+        $job = $jobs[$no] ?? [];
+
+        $billName = trim((string) ($project['LVS_Bill_to_Name'] ?? ''));
+        if ($billName === '') {
+            $billName = trim((string) ($job['LVS_Bill_to_Name'] ?? $job['Bill_to_Name'] ?? ''));
+        }
+
+        $serviceName = trim((string) ($entity['KVT_Customer_Description'] ?? ''));
+        if ($serviceName === '') {
+            $serviceName = trim((string) ($entity['Description'] ?? $project['LVS_Main_Entity_Description'] ?? ''));
+        }
+
+        $rows[] = [
+            'No' => $no,
+            'Description' => (string) ($project['Description'] ?? ''),
+            'Your_Reference' => (string) ($project['Your_Reference'] ?? ''),
+            'LVS_Bill_to_Name' => $billName,
+            'LVS_Main_Entity' => $mainEntityNo,
+            'contractor' => [
+                'Naam' => $billName,
+                'Adres' => (string) ($job['Sell_to_Address'] ?? ''),
+                'Postcode' => (string) ($job['Sell_to_Post_Code'] ?? ''),
+                'Woonplaats' => (string) ($job['Sell_to_City'] ?? ''),
+            ],
+            'serviceLocation' => [
+                'No' => $mainEntityNo,
+                'Naam' => $serviceName,
+                'Adres' => trim((string) ($entity['KVT_Address'] ?? '') . ' ' . (string) ($entity['KVT_Address_2'] ?? '')),
+                'Postcode' => (string) ($entity['KVT_Post_Code'] ?? ''),
+                'Woonplaats' => (string) ($entity['KVT_City'] ?? ''),
+            ],
+            'hoursStart' => $hourRanges[$no]['start'] ?? null,
+            'hoursEnd' => $hourRanges[$no]['end'] ?? null,
+        ];
+    }
+
+    $rows = projects_normalize_rows($rows);
     $path = projects_nightly_cache_path();
     $ttl = projects_nightly_ttl();
     write_cache_json($path, $rows, $ttl, $sourceUrl);

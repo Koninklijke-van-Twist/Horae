@@ -131,6 +131,146 @@ function pdf_load_resources_for_lines(array $lines, string $baseApp, array $auth
     return [$resourcesByNo, $employeesByNo];
 }
 
+function pdf_pick_first_non_blank(array $candidates): string
+{
+    foreach ($candidates as $value) {
+        $text = trim((string) $value);
+        if ($text !== '') {
+            return $text;
+        }
+    }
+    return '';
+}
+
+/** @param list<array<string,mixed>> $maps
+ * @return array{value:array<string,string>,conflicts:list<string>}
+ */
+function pdf_merge_field_maps(array $maps, array $keys): array
+{
+    $value = [];
+    $conflicts = [];
+    foreach ($keys as $key) {
+        $seen = [];
+        $picked = '';
+        foreach ($maps as $map) {
+            $v = trim((string) ($map[$key] ?? ''));
+            if ($v === '') {
+                continue;
+            }
+            if ($picked === '') {
+                $picked = $v;
+            }
+            $seen[$v] = true;
+        }
+        $value[$key] = $picked;
+        if (count($seen) > 1) {
+            $conflicts[] = $key;
+        }
+    }
+    return ['value' => $value, 'conflicts' => $conflicts];
+}
+
+function pdf_project_meta_from_cache(string $projectNo, string $baseApp, array $auth): array
+{
+    $cached = projects_nightly_get($projectNo);
+    if (is_array($cached)) {
+        $contractor = is_array($cached['contractor'] ?? null) ? $cached['contractor'] : [
+            'Naam' => (string) ($cached['LVS_Bill_to_Name'] ?? ''),
+            'Adres' => '',
+            'Postcode' => '',
+            'Woonplaats' => '',
+        ];
+        $service = is_array($cached['serviceLocation'] ?? null) ? $cached['serviceLocation'] : [
+            'No' => '',
+            'Naam' => '',
+            'Adres' => '',
+            'Postcode' => '',
+            'Woonplaats' => '',
+        ];
+        return [
+            'project' => [
+                'No' => $projectNo,
+                'Description' => (string) ($cached['Description'] ?? ''),
+                'Your_Reference' => (string) ($cached['Your_Reference'] ?? ''),
+                'LVS_Bill_to_Name' => (string) ($cached['LVS_Bill_to_Name'] ?? ''),
+                'LVS_Main_Entity' => (string) ($cached['LVS_Main_Entity'] ?? ''),
+            ],
+            'contractor' => [
+                'Naam' => (string) ($contractor['Naam'] ?? ''),
+                'Adres' => (string) ($contractor['Adres'] ?? ''),
+                'Postcode' => (string) ($contractor['Postcode'] ?? ''),
+                'Woonplaats' => (string) ($contractor['Woonplaats'] ?? ''),
+            ],
+            'serviceLocation' => [
+                'No' => (string) ($service['No'] ?? ''),
+                'Naam' => (string) ($service['Naam'] ?? ''),
+                'Adres' => (string) ($service['Adres'] ?? ''),
+                'Postcode' => (string) ($service['Postcode'] ?? ''),
+                'Woonplaats' => (string) ($service['Woonplaats'] ?? ''),
+            ],
+            'projectDisplay' => [
+                'Opdrachtnummer' => (string) ($cached['Your_Reference'] ?? ''),
+                'Project' => (string) ($cached['Description'] ?? ''),
+                'Postcode' => (string) ($service['Postcode'] ?? ''),
+                'Woonplaats' => (string) ($service['Woonplaats'] ?? ''),
+            ],
+            'hoursStart' => $cached['hoursStart'] ?? null,
+            'hoursEnd' => $cached['hoursEnd'] ?? null,
+        ];
+    }
+
+    // Fallback live BC als nightly-cache het project mist
+    $projFilter = rawurlencode("No eq '" . str_replace("'", "''", $projectNo) . "'");
+    $projUrl = $baseApp . "AppProjecten?\$select=No,Your_Reference,LVS_Bill_to_Name,Description,LVS_Main_Entity,LVS_Main_Entity_Description,LVS_Job_Location&\$filter={$projFilter}&\$format=json";
+    $project = (odata_get_all($projUrl, $auth)[0] ?? ['No' => $projectNo, 'Description' => '']);
+    $mainNo = trim((string) ($project['LVS_Main_Entity'] ?? ''));
+    if ($mainNo === '') {
+        $mainNo = trim((string) ($project['LVS_Job_Location'] ?? ''));
+    }
+    $entity = [];
+    if ($mainNo !== '') {
+        $entFilter = rawurlencode("No eq '" . str_replace("'", "''", $mainNo) . "'");
+        $entUrl = $baseApp . "LVS_MainEntityCard?\$select=No,Description,KVT_Customer_Description,KVT_Address,KVT_Address_2,KVT_Post_Code,KVT_City&\$filter={$entFilter}&\$format=json";
+        try {
+            $entity = odata_get_all($entUrl, $auth)[0] ?? [];
+        } catch (Throwable $e) {
+            $entity = [];
+        }
+    }
+    $locationsUrl = $baseApp . "JobCard?\$select=Sell_to_Address,No,Sell_to_Post_Code,Sell_to_City&\$filter={$projFilter}&\$format=json";
+    $locations = odata_get_all($locationsUrl, $auth)[0] ?? [];
+    $serviceName = trim((string) ($entity['KVT_Customer_Description'] ?? ''));
+    if ($serviceName === '') {
+        $serviceName = trim((string) ($entity['Description'] ?? $project['LVS_Main_Entity_Description'] ?? ''));
+    }
+    $service = [
+        'No' => $mainNo,
+        'Naam' => $serviceName,
+        'Adres' => trim((string) ($entity['KVT_Address'] ?? '') . ' ' . (string) ($entity['KVT_Address_2'] ?? '')),
+        'Postcode' => (string) ($entity['KVT_Post_Code'] ?? ''),
+        'Woonplaats' => (string) ($entity['KVT_City'] ?? ''),
+    ];
+    return [
+        'project' => $project,
+        'contractor' => [
+            'Naam' => (string) ($project['LVS_Bill_to_Name'] ?? ''),
+            'Adres' => (string) ($locations['Sell_to_Address'] ?? ''),
+            'Postcode' => (string) ($locations['Sell_to_Post_Code'] ?? ''),
+            'Woonplaats' => (string) ($locations['Sell_to_City'] ?? ''),
+        ],
+        'serviceLocation' => $service,
+        'projectDisplay' => [
+            'Opdrachtnummer' => (string) ($project['Your_Reference'] ?? ''),
+            'Project' => (string) ($project['Description'] ?? ''),
+            'Postcode' => $service['Postcode'],
+            'Woonplaats' => $service['Woonplaats'],
+        ],
+        'hoursStart' => null,
+        'hoursEnd' => null,
+        'locations' => $locations,
+    ];
+}
+
 function pdf_build_report_for_project(string $projectNo, array $tsRows, array $lines, array $projectNos, string $baseApp, array $auth): array
 {
     foreach ($lines as &$l) {
@@ -151,53 +291,36 @@ function pdf_build_report_for_project(string $projectNo, array $tsRows, array $l
         'totals' => ['days' => array_fill(0, 7, 0.0), 'all' => 0.0],
     ];
 
-    $projFilter = rawurlencode("No eq '" . str_replace("'", "''", $projectNo) . "'");
-    $projUrl = $baseApp . "AppProjecten?\$select=No,Your_Reference,LVS_Bill_to_Name,Description,LVS_Job_Location,LVS_Document_Status&\$filter={$projFilter}&\$format=json";
-    $projRows = odata_get_all($projUrl, $auth);
-    $project = $projRows[0] ?? ['No' => $projectNo, 'Description' => ''];
+    $meta = pdf_project_meta_from_cache($projectNo, $baseApp, $auth);
 
-    $locationsUrl = $baseApp . "JobCard?\$select=Sell_to_Address,No,Sell_to_Post_Code,Sell_to_City,Ship_to_City,Ship_to_Post_Code&\$filter={$projFilter}&\$format=json";
-    $locationsRows = odata_get_all($locationsUrl, $auth);
-    $locations = $locationsRows[0] ?? [];
-
-    $startDate = 'onbekend';
-    $endDate = 'onbekend';
     $weekNo = 0;
-
-    $wL = 999999999999999999;
-    $wH = -1;
     foreach ($gridProject['people'] as $person) {
         if ($weekNo === 0) {
             $weekNo = (int) ($person['week'] ?? 0);
         }
-        $week = $person['week'] + (52 * $person['sortYear']);
-        if ($week > $wH) {
-            $wH = $week;
-            $endDate = $person['endDate'];
-        }
-        if ($week < $wL) {
-            $wL = $week;
-            $startDate = $person['startDate'];
-        }
     }
-
     if ($weekNo === 0 && count($tsRows) > 0) {
         $weekNo = pdf_extract_week_no($tsRows[0]);
     }
 
-    $contractor = [
-        'Naam' => $project['LVS_Bill_to_Name'] ?? '',
-        'Adres' => $locations['Sell_to_Address'] ?? '',
-        'Postcode' => $locations['Sell_to_Post_Code'] ?? '',
-        'Woonplaats' => $locations['Sell_to_City'] ?? '',
-    ];
-
-    $projectDisplay = [
-        'Opdrachtnummer' => $project['Your_Reference'] ?? '',
-        'Project' => $project['Description'] ?? '',
-        'Postcode' => $locations['Ship_to_Post_Code'] ?? '',
-        'Woonplaats' => $locations['Ship_to_City'] ?? '',
-    ];
+    $startDate = $meta['hoursStart'] ?? null;
+    $endDate = $meta['hoursEnd'] ?? null;
+    if (!$startDate || !$endDate) {
+        // Fallback: weekdatums uit urenstaat als nightly-bereik ontbreekt
+        $wL = PHP_INT_MAX;
+        $wH = -1;
+        foreach ($gridProject['people'] as $person) {
+            $week = (int) ($person['week'] ?? 0) + (52 * (int) ($person['sortYear'] ?? 0));
+            if ($week > $wH) {
+                $wH = $week;
+                $endDate = $person['endDate'] ?? $endDate;
+            }
+            if ($week < $wL) {
+                $wL = $week;
+                $startDate = $person['startDate'] ?? $startDate;
+            }
+        }
+    }
 
     $totals = ['days' => array_fill(0, 7, 0.0), 'all' => 0.0];
     foreach ($gridProject['people'] as $p) {
@@ -209,19 +332,21 @@ function pdf_build_report_for_project(string $projectNo, array $tsRows, array $l
 
     return [
         'projectNo' => $projectNo,
+        'projectNos' => [$projectNo],
         'weekNo' => $weekNo,
-        'documentStatus' => (string) ($project['LVS_Document_Status'] ?? ''),
         'weekInfo' => [
             'week' => $weekNo,
-            'start' => $startDate,
-            'end' => $endDate,
+            'start' => $startDate ?: 'onbekend',
+            'end' => $endDate ?: 'onbekend',
         ],
-        'contractor' => $contractor,
-        'project' => $project,
-        'projectDisplay' => $projectDisplay,
-        'locations' => $locations,
+        'contractor' => $meta['contractor'],
+        'serviceLocation' => $meta['serviceLocation'],
+        'project' => $meta['project'],
+        'projectDisplay' => $meta['projectDisplay'],
+        'locations' => $meta['locations'] ?? [],
         'gridProject' => $gridProject,
         'totals' => $totals,
+        'headerConflicts' => [],
         'signatures' => [
             'hoofdaannemer' => '',
             'onderaannemer' => '',
@@ -254,46 +379,27 @@ function pdf_build_synthetic_report(string $projectNo, int $weekNo, int $year, a
         'totals' => ['days' => array_fill(0, 7, 0.0), 'all' => 0.0],
     ];
 
-    $projFilter = rawurlencode("No eq '" . str_replace("'", "''", $projectNo) . "'");
-    $projUrl = $baseApp . "AppProjecten?\$select=No,Your_Reference,LVS_Bill_to_Name,Description,LVS_Job_Location,LVS_Document_Status&\$filter={$projFilter}&\$format=json";
-    $projRows = odata_get_all($projUrl, $auth);
-    $project = $projRows[0] ?? ['No' => $projectNo, 'Description' => ''];
-
-    $locationsUrl = $baseApp . "JobCard?\$select=Sell_to_Address,No,Sell_to_Post_Code,Sell_to_City,Ship_to_City,Ship_to_Post_Code&\$filter={$projFilter}&\$format=json";
-    $locationsRows = odata_get_all($locationsUrl, $auth);
-    $locations = $locationsRows[0] ?? [];
-
-    $contractor = [
-        'Naam' => $project['LVS_Bill_to_Name'] ?? '',
-        'Adres' => $locations['Sell_to_Address'] ?? '',
-        'Postcode' => $locations['Sell_to_Post_Code'] ?? '',
-        'Woonplaats' => $locations['Sell_to_City'] ?? '',
-    ];
-
-    $projectDisplay = [
-        'Opdrachtnummer' => $project['Your_Reference'] ?? '',
-        'Project' => $project['Description'] ?? '',
-        'Postcode' => $locations['Ship_to_Post_Code'] ?? '',
-        'Woonplaats' => $locations['Ship_to_City'] ?? '',
-    ];
+    $meta = pdf_project_meta_from_cache($projectNo, $baseApp, $auth);
 
     return [
         'projectNo' => $projectNo,
+        'projectNos' => [$projectNo],
         'weekNo' => $weekNo,
         'year' => $year,
         'isHoraeOnly' => true,
-        'documentStatus' => (string) ($project['LVS_Document_Status'] ?? ''),
         'weekInfo' => [
             'week' => $weekNo,
-            'start' => 'onbekend',
-            'end' => 'onbekend',
+            'start' => $meta['hoursStart'] ?? 'onbekend',
+            'end' => $meta['hoursEnd'] ?? 'onbekend',
         ],
-        'contractor' => $contractor,
-        'project' => $project,
-        'projectDisplay' => $projectDisplay,
-        'locations' => $locations,
+        'contractor' => $meta['contractor'],
+        'serviceLocation' => $meta['serviceLocation'],
+        'project' => $meta['project'],
+        'projectDisplay' => $meta['projectDisplay'],
+        'locations' => $meta['locations'] ?? [],
         'gridProject' => $gridProject,
         'totals' => ['days' => array_fill(0, 7, 0.0), 'all' => 0.0],
+        'headerConflicts' => [],
         'signatures' => [
             'hoofdaannemer' => '',
             'onderaannemer' => '',
@@ -341,10 +447,15 @@ function pdf_finalize_report(array &$report, string $reportKey, array $tsNos): v
 {
     $weekNo = (int) ($report['weekNo'] ?? 0);
     $projectNo = (string) ($report['projectNo'] ?? '');
+    $projectNos = $report['projectNos'] ?? [$projectNo];
+    if (!is_array($projectNos) || count($projectNos) === 0) {
+        $projectNos = [$projectNo];
+    }
     $reportYear = (int) ($report['year'] ?? 0);
     $report['isHoraeOnly'] = !empty($report['isHoraeOnly']);
     $report['exportKey'] = $reportKey;
     $report['exportTsNo'] = pdf_resolve_export_ts_no($report, $tsNos);
+    $report['projectNos'] = array_values($projectNos);
 
     $weekSlots = [];
     if ($weekNo > 0) {
@@ -359,14 +470,16 @@ function pdf_finalize_report(array &$report, string $reportKey, array $tsNos): v
     }
 
     $overrideMap = [];
-    foreach ($weekSlots as $slot) {
-        $overridePayload = overrides_read($projectNo, (int) $slot['week'], (int) $slot['year']);
-        if (is_array($overridePayload['overrides'] ?? null)) {
-            $overrideMap = array_merge($overrideMap, $overridePayload['overrides']);
-        }
-        if ($reportYear <= 0 && (int) ($overridePayload['year'] ?? 0) > 0) {
-            $reportYear = (int) $overridePayload['year'];
-            $report['year'] = $reportYear;
+    foreach ($projectNos as $pNo) {
+        foreach ($weekSlots as $slot) {
+            $overridePayload = overrides_read((string) $pNo, (int) $slot['week'], (int) $slot['year']);
+            if (is_array($overridePayload['overrides'] ?? null)) {
+                $overrideMap = array_merge($overrideMap, $overridePayload['overrides']);
+            }
+            if ($reportYear <= 0 && (int) ($overridePayload['year'] ?? 0) > 0) {
+                $reportYear = (int) $overridePayload['year'];
+                $report['year'] = $reportYear;
+            }
         }
     }
 
@@ -379,6 +492,123 @@ function pdf_finalize_report(array &$report, string $reportKey, array $tsNos): v
     pdf_recalc_totals($report);
 
     $report['overrideKeys'] = array_keys($overrideMap);
+}
+
+function pdf_merge_reports(array $reports, array $projectNos): array
+{
+    if (count($reports) === 0) {
+        throw new RuntimeException('Geen rapporten om samen te voegen');
+    }
+    if (count($reports) === 1) {
+        $only = array_values($reports)[0];
+        $only['projectNos'] = $projectNos;
+        return $only;
+    }
+
+    $people = [];
+    $multiYear = false;
+    $weekNo = 0;
+    $year = 0;
+    $isHoraeOnly = true;
+    $contractorMaps = [];
+    $serviceMaps = [];
+    $displayMaps = [];
+    $starts = [];
+    $ends = [];
+
+    foreach ($reports as $report) {
+        foreach ($report['gridProject']['people'] ?? [] as $person) {
+            $people[] = $person;
+        }
+        if (!empty($report['gridProject']['multiYear'])) {
+            $multiYear = true;
+        }
+        if ($weekNo === 0) {
+            $weekNo = (int) ($report['weekNo'] ?? 0);
+        }
+        if ($year === 0) {
+            $year = (int) ($report['year'] ?? 0);
+        }
+        if (empty($report['isHoraeOnly'])) {
+            $isHoraeOnly = false;
+        }
+        $contractorMaps[] = $report['contractor'] ?? [];
+        $serviceMaps[] = $report['serviceLocation'] ?? [];
+        $displayMaps[] = $report['projectDisplay'] ?? [];
+        $starts[] = $report['weekInfo']['start'] ?? '';
+        $ends[] = $report['weekInfo']['end'] ?? '';
+    }
+
+    $contractorMerge = pdf_merge_field_maps($contractorMaps, ['Naam', 'Adres', 'Postcode', 'Woonplaats']);
+    $serviceMerge = pdf_merge_field_maps($serviceMaps, ['No', 'Naam', 'Adres', 'Postcode', 'Woonplaats']);
+    $displayMerge = pdf_merge_field_maps($displayMaps, ['Opdrachtnummer', 'Project', 'Postcode', 'Woonplaats']);
+
+    // Postcode/woonplaats in projectDisplay komen uit servicelocatie
+    $displayMerge['value']['Postcode'] = pdf_pick_first_non_blank([
+        $displayMerge['value']['Postcode'] ?? '',
+        $serviceMerge['value']['Postcode'] ?? '',
+    ]);
+    $displayMerge['value']['Woonplaats'] = pdf_pick_first_non_blank([
+        $displayMerge['value']['Woonplaats'] ?? '',
+        $serviceMerge['value']['Woonplaats'] ?? '',
+    ]);
+
+    $conflicts = [];
+    foreach ($contractorMerge['conflicts'] as $field) {
+        $conflicts[] = 'hoofdaannemer.' . $field;
+    }
+    foreach ($serviceMerge['conflicts'] as $field) {
+        $conflicts[] = 'servicelocatie.' . $field;
+    }
+
+    $primary = array_values($reports)[0];
+    $start = pdf_pick_first_non_blank($starts);
+    $end = pdf_pick_first_non_blank($ends);
+
+    // Bij conflicterende datums: eerste niet-blanco (volgorde projectlijst)
+    if (count(array_unique(array_filter(array_map('strval', $starts)))) > 1) {
+        $conflicts[] = 'weekInfo.start';
+    }
+    if (count(array_unique(array_filter(array_map('strval', $ends)))) > 1) {
+        $conflicts[] = 'weekInfo.end';
+    }
+
+    $primaryNo = (string) ($projectNos[0] ?? $primary['projectNo'] ?? '');
+
+    return [
+        'projectNo' => $primaryNo,
+        'projectNos' => array_values($projectNos),
+        'weekNo' => $weekNo,
+        'year' => $year,
+        'isHoraeOnly' => $isHoraeOnly,
+        'weekInfo' => [
+            'week' => $weekNo,
+            'start' => $start !== '' ? $start : 'onbekend',
+            'end' => $end !== '' ? $end : 'onbekend',
+        ],
+        'contractor' => $contractorMerge['value'],
+        'serviceLocation' => $serviceMerge['value'],
+        'project' => array_merge($primary['project'] ?? [], [
+            'No' => $primaryNo,
+            'Description' => $displayMerge['value']['Project'] ?? '',
+            'Your_Reference' => $displayMerge['value']['Opdrachtnummer'] ?? '',
+        ]),
+        'projectDisplay' => $displayMerge['value'],
+        'locations' => $primary['locations'] ?? [],
+        'gridProject' => [
+            'projectNo' => $primaryNo,
+            'people' => $people,
+            'multiYear' => $multiYear,
+            'totals' => ['days' => array_fill(0, 7, 0.0), 'all' => 0.0],
+        ],
+        'totals' => ['days' => array_fill(0, 7, 0.0), 'all' => 0.0],
+        'headerConflicts' => array_values(array_unique($conflicts)),
+        'signatures' => $primary['signatures'] ?? [
+            'hoofdaannemer' => '',
+            'onderaannemer' => '',
+            'uitvoerder' => '',
+        ],
+    ];
 }
 
 function pdf_load_reports(string $baseApp, array $auth, array $query): array
@@ -429,7 +659,7 @@ function pdf_load_reports(string $baseApp, array $auth, array $query): array
         $lines = odata_get_all($linesUrl, $auth, 60);
     }
 
-    $reportsByProject = [];
+    $partialReports = [];
 
     foreach ($projectNos as $projectNo) {
         $projectTsRows = array_values(array_filter($tsRows, function ($row) use ($projectNo, $lines) {
@@ -443,7 +673,7 @@ function pdf_load_reports(string $baseApp, array $auth, array $query): array
         }));
 
         if (count($projectTsRows) > 0 || count(array_filter($lines, fn($l) => ($l['Job_No'] ?? '') === $projectNo)) > 0) {
-            $reportsByProject[$projectNo] = pdf_build_report_for_project($projectNo, $projectTsRows, $lines, $projectNos, $baseApp, $auth);
+            $partialReports[] = pdf_build_report_for_project($projectNo, $projectTsRows, $lines, $projectNos, $baseApp, $auth);
         }
     }
 
@@ -454,20 +684,25 @@ function pdf_load_reports(string $baseApp, array $auth, array $query): array
         if (!in_array($projectNo, $projectNos, true)) {
             $projectNos[] = $projectNo;
         }
-        $reportKey = $projectNo . '::Y' . $year . '::W' . $weekNo;
-        $reportsByProject[$reportKey] = pdf_build_synthetic_report($projectNo, $weekNo, $year, $projectNos, $baseApp, $auth);
+        $partialReports[] = pdf_build_synthetic_report($projectNo, $weekNo, $year, $projectNos, $baseApp, $auth);
     }
 
-    if (count($reportsByProject) === 0 && count($bcTsNos) > 0) {
+    if (count($partialReports) === 0 && count($bcTsNos) > 0) {
         throw new RuntimeException('Urenstaat niet gevonden');
     }
-
-    foreach ($reportsByProject as $reportKey => &$report) {
-        pdf_finalize_report($report, (string) $reportKey, $tsNos);
+    if (count($partialReports) === 0) {
+        throw new RuntimeException('Geen rapport gevonden');
     }
-    unset($report);
 
-    return $reportsByProject;
+    $merged = pdf_merge_reports($partialReports, $projectNos);
+    $exportKey = count($projectNos) > 1
+        ? ('merged::' . implode('+', $projectNos))
+        : (string) ($projectNos[0] ?? $merged['projectNo'] ?? 'report');
+
+    pdf_finalize_report($merged, $exportKey, $tsNos);
+    $merged['selectedTsNos'] = $tsNos;
+
+    return [$exportKey => $merged];
 }
 
 function pdf_render_report_html(array $report, bool $exportMode = false): string
@@ -476,11 +711,12 @@ function pdf_render_report_html(array $report, bool $exportMode = false): string
     $weekInfo = $report['weekInfo'];
     $contractor = $report['contractor'];
     $project = $report['project'];
-    $locations = $report['locations'];
+    $locations = $report['locations'] ?? [];
     $gridProject = $report['gridProject'];
     $totals = $report['totals'];
-    $documentStatus = $report['documentStatus'];
     $projectDisplay = $report['projectDisplay'];
+    $serviceLocation = $report['serviceLocation'] ?? [];
+    $headerConflicts = $report['headerConflicts'] ?? [];
     $overrideKeys = $report['overrideKeys'];
     $originals = $report['originals'];
 
@@ -505,10 +741,20 @@ function pdf_prepare_export_html(string $html, string $webRoot): string
 
 function pdf_build_export_filename(array $report): string
 {
-    $projectNo = preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) ($report['projectNo'] ?? 'project'));
+    $projectNos = $report['projectNos'] ?? [($report['projectNo'] ?? 'project')];
+    if (!is_array($projectNos) || count($projectNos) === 0) {
+        $projectNos = [(string) ($report['projectNo'] ?? 'project')];
+    }
+    $safeProjects = array_map(
+        fn($p) => preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) $p),
+        $projectNos
+    );
+    $projectPart = count($safeProjects) > 1
+        ? 'MULTI_' . count($safeProjects)
+        : (string) $safeProjects[0];
     $weekNo = (int) ($report['weekNo'] ?? 0);
     $year = (int) ($report['year'] ?? 0);
-    $parts = ['Mandagenregister', $projectNo];
+    $parts = ['Mandagenregister', $projectPart];
     if ($year > 0) {
         $parts[] = 'Y' . $year;
     }

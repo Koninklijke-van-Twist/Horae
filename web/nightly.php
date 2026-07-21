@@ -1,6 +1,6 @@
 <?php
 /**
- * Nightly job: haalt alle projecten uit AppProjecten en schrijft 24u-cache.
+ * Nightly job: haalt AppProjecten + servicelocatie + urenbereik op en schrijft 24u-cache.
  * Wordt via GET aangeroepen door het bestaande nightly-script (geen UI).
  *
  * Voorbeeld: GET /horae/web/nightly.php
@@ -22,6 +22,7 @@ try {
     echo 'cached_at=' . date('c', (int) $result['cached_at']) . "\n";
     echo 'expires_at=' . date('c', (int) $result['expires_at']) . "\n";
     echo 'path=' . (string) $result['path'] . "\n";
+    echo "includes=servicelocation,contractor,hoursStart,hoursEnd\n";
 } catch (Throwable $e) {
     http_response_code(500);
     echo "FAIL\n";

@@ -13,18 +13,24 @@ $contractor = $contractor ?? [
   'Woonplaats' => '',
 ];
 
+$locations = $locations ?? [];
+$serviceLocation = $serviceLocation ?? ($report['serviceLocation'] ?? []);
+$headerConflicts = $headerConflicts ?? ($report['headerConflicts'] ?? []);
 $projectNo = $project['No'] ?? ($report['projectNo'] ?? '');
+$projectNosList = $report['projectNos'] ?? [$projectNo];
+if (!is_array($projectNosList) || count($projectNosList) === 0) {
+  $projectNosList = [$projectNo];
+}
 $projectRef = $projectDisplay['Opdrachtnummer'] ?? ($project['Your_Reference'] ?? '');
 $projectDesc = $projectDisplay['Project'] ?? ($project['Description'] ?? '');
-$projPostcode = $projectDisplay['Postcode'] ?? ($locations['Ship_to_Post_Code'] ?? $project['Post_Code'] ?? '');
-$projWoonplaats = $projectDisplay['Woonplaats'] ?? ($locations['Ship_to_City'] ?? $project['City'] ?? '');
+$projPostcode = $projectDisplay['Postcode'] ?? ($serviceLocation['Postcode'] ?? ($locations['Ship_to_Post_Code'] ?? ''));
+$projWoonplaats = $projectDisplay['Woonplaats'] ?? ($serviceLocation['Woonplaats'] ?? ($locations['Ship_to_City'] ?? ''));
 
 $weekNo = (int) ($weekInfo['week'] ?? ($report['weekNo'] ?? 0));
 $reportYear = (int) ($report['year'] ?? 0);
 $isHoraeOnly = !empty($report['isHoraeOnly']);
 $start = $weekInfo['start'] ?? null;
 $end = $weekInfo['end'] ?? null;
-$documentStatus = $documentStatus ?? ($report['documentStatus'] ?? '');
 $signatures = $report['signatures'] ?? [
   'hoofdaannemer' => '',
   'onderaannemer' => '',
@@ -63,12 +69,15 @@ function ts_render_value(string $value, bool $bold = false): string
 }
 
 $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
-$timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', $projectNo . '_Y' . $reportYear . '_W' . $weekNo);
-$exportTsNo = $report['exportTsNo'] ?? overrides_synthetic_ts_no($projectNo, $weekNo, $reportYear);
+$timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', implode('_', $projectNosList) . '_Y' . $reportYear . '_W' . $weekNo);
+$exportTsNos = $report['selectedTsNos'] ?? [$report['exportTsNo'] ?? overrides_synthetic_ts_no($projectNo, $weekNo, $reportYear)];
+if (!is_array($exportTsNos) || count($exportTsNos) === 0) {
+  $exportTsNos = [$report['exportTsNo'] ?? overrides_synthetic_ts_no($projectNo, $weekNo, $reportYear)];
+}
 $exportKey = $report['exportKey'] ?? $projectNo;
 $exportQuery = http_build_query([
-  'projectNo' => [$projectNo],
-  'tsNo' => [$exportTsNo],
+  'projectNo' => array_values($projectNosList),
+  'tsNo' => array_values($exportTsNos),
   'exportKey' => $exportKey,
 ]);
 ?>
@@ -77,7 +86,7 @@ $exportQuery = http_build_query([
 
 <head>
   <meta charset="utf-8">
-  <title>Urenstaat <?= h($projectNo) ?> - Week <?= h($weekNo) ?></title>
+  <title>Urenstaat <?= h(implode(', ', $projectNosList)) ?> - Week <?= h($weekNo) ?></title>
   <style>
     @page {
       size: A4 landscape;
@@ -1151,6 +1160,13 @@ $exportQuery = http_build_query([
       <button type="button" class="btn-delete-week" id="deleteWeekBtn-<?= h($timesheetDomId) ?>">Horae-week verwijderen</button>
     <?php endif; ?>
   </div>
+  <?php if (count($headerConflicts) > 0): ?>
+  <div class="no-print" style="margin-bottom:12px; padding:10px 12px; border:1px solid #f59e0b; background:#fffbeb; border-radius:10px; color:#92400e; font-size:13px;">
+    ⚠️ Waarschuwing: geselecteerde projecten hebben verschillende waarden voor
+    <b><?= h(implode(', ', $headerConflicts)) ?></b>.
+    Voor conflicterende velden is de eerste niet-lege waarde gebruikt (volgorde van projectselectie).
+  </div>
+  <?php endif; ?>
   <?php endif; ?>
 
   <div class="ts-report-shell">
@@ -1168,9 +1184,6 @@ $exportQuery = http_build_query([
       <td>
         <table class="top-mini" style="width:auto; min-width:280px;">
           <tr class="fullw">
-            <td <?= ts_td_attrs('documentStatus', 'Documentstatus', $documentStatus, $originals, $overrideSet) ?> style="width:42%; vertical-align:top;">
-              <p class="blue fullw"><b>Documentstatus</b></p><?= ts_render_value($documentStatus) ?>
-            </td>
             <td class="fullw" style="vertical-align:top; padding:0; border:0;">
               <table style="width:100%; border-collapse:collapse;">
                 <tr>
