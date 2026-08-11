@@ -3,7 +3,7 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-function odata_get_all(string $url, array $auth, $ttlSeconds = 300): array
+function odata_get_all(string $url, array $auth, $ttlSeconds = 300, int $curlTimeout = 120): array
 {
     $ttlSeconds = max(1, (int) $ttlSeconds);
     maybe_cleanup_expired_cache_files();
@@ -26,7 +26,12 @@ function odata_get_all(string $url, array $auth, $ttlSeconds = 300): array
     $next = $url;
 
     while ($next) {
-        $resp = odata_get_json($next, $auth);
+        // Voorkom PHP max_execution_time tijdens lange OData-paginatie
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(300);
+        }
+
+        $resp = odata_get_json($next, $auth, $curlTimeout);
 
         if (!isset($resp['value']) || !is_array($resp['value'])) {
             throw new Exception("OData response missing 'value' array");
@@ -40,14 +45,18 @@ function odata_get_all(string $url, array $auth, $ttlSeconds = 300): array
     return $all;
 }
 
-function odata_get_json(string $url, array $auth): array
+function odata_get_json(string $url, array $auth, int $timeoutSeconds = 120): array
 {
+    $timeoutSeconds = max(10, $timeoutSeconds);
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_CONNECTTIMEOUT => 30,
+        CURLOPT_TIMEOUT => $timeoutSeconds,
         CURLOPT_HTTPHEADER => [
             "Accept: application/json",
+            "Prefer: odata.maxpagesize=500",
         ],
     ]);
 
@@ -67,7 +76,9 @@ function odata_get_json(string $url, array $auth): array
 
     $raw = curl_exec($ch);
     if ($raw === false) {
-        throw new Exception("cURL error: " . curl_error($ch));
+        $err = curl_error($ch);
+        curl_close($ch);
+        throw new Exception("cURL error: " . $err);
     }
 
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -1678,44 +1689,99 @@ function planning_lines_nightly_cache_path(): string
 }
 
 /**
- * Haalt alle Job_Planning_Lines met Type=Resource op, gegroepeerd per Job_No.
- * Quantity = uren (BC “Amount”/hoeveelheid bij Resource).
+ * Normaliseert één Job Planning Line (Resource) voor cache/rapport.
+ * @return array<string,mixed>|null
+ */
+function planning_line_normalize_row(array $row): ?array
+{
+    $jobNo = trim((string) ($row['Job_No'] ?? ''));
+    $type = trim((string) ($row['Type'] ?? ''));
+    if ($jobNo === '' || strcasecmp($type, 'Resource') !== 0) {
+        return null;
+    }
+    $date = substr((string) ($row['Planning_Date'] ?? ''), 0, 10);
+    $qty = (float) ($row['Quantity'] ?? 0);
+    return [
+        'Job_No' => $jobNo,
+        'Job_Task_No' => (string) ($row['Job_Task_No'] ?? ''),
+        'Line_No' => (int) ($row['Line_No'] ?? 0),
+        'Type' => 'Resource',
+        'No' => trim((string) ($row['No'] ?? '')),
+        'Description' => (string) ($row['Description'] ?? ''),
+        'Planning_Date' => $date,
+        'Quantity' => $qty,
+        'Amount' => $qty,
+    ];
+}
+
+/**
+ * Haalt Job_Planning_Lines (Type=Resource) op, gegroepeerd per Job_No.
+ * Bij grote volumes: per batch van projecten (voorkomt één lange OData-call).
+ *
+ * @param list<string> $jobNos Optioneel: beperk tot deze projectnummers
  * @return array<string, list<array<string,mixed>>>
  */
-function planning_lines_nightly_fetch(string $base, array $auth): array
+function planning_lines_nightly_fetch(string $base, array $auth, array $jobNos = []): array
 {
-    $sourceUrl = $base . "Job_Planning_Lines?\$select=Job_No,Job_Task_No,Line_No,Type,No,Description,Planning_Date,Quantity&\$filter="
-        . rawurlencode("Type eq 'Resource'")
-        . "&\$format=json";
-    $hashPath = cache_path_for_key(build_cache_key($sourceUrl, $auth));
-    if (is_file($hashPath)) {
-        @unlink($hashPath);
-    }
-    $raw = odata_get_all($sourceUrl, $auth, 1);
     $byJob = [];
-    foreach ($raw as $row) {
-        if (!is_array($row)) {
-            continue;
+    $jobNos = array_values(array_unique(array_filter(array_map(
+        fn($n) => trim((string) $n),
+        $jobNos
+    ), fn($n) => $n !== '')));
+
+    $appendRows = function (array $raw) use (&$byJob): void {
+        foreach ($raw as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $norm = planning_line_normalize_row($row);
+            if ($norm === null) {
+                continue;
+            }
+            $byJob[$norm['Job_No']][] = $norm;
         }
-        $jobNo = trim((string) ($row['Job_No'] ?? ''));
-        $type = trim((string) ($row['Type'] ?? ''));
-        if ($jobNo === '' || strcasecmp($type, 'Resource') !== 0) {
-            continue;
+    };
+
+    // Geen projectlijst: één gefilterde query (met paginatie + time-limit reset)
+    if (count($jobNos) === 0) {
+        $sourceUrl = $base . "Job_Planning_Lines?\$select=Job_No,Job_Task_No,Line_No,Type,No,Description,Planning_Date,Quantity&\$filter="
+            . rawurlencode("Type eq 'Resource'")
+            . "&\$format=json";
+        $hashPath = cache_path_for_key(build_cache_key($sourceUrl, $auth));
+        if (is_file($hashPath)) {
+            @unlink($hashPath);
         }
-        $date = substr((string) ($row['Planning_Date'] ?? ''), 0, 10);
-        $byJob[$jobNo][] = [
-            'Job_No' => $jobNo,
-            'Job_Task_No' => (string) ($row['Job_Task_No'] ?? ''),
-            'Line_No' => (int) ($row['Line_No'] ?? 0),
-            'Type' => 'Resource',
-            'No' => trim((string) ($row['No'] ?? '')),
-            'Description' => (string) ($row['Description'] ?? ''),
-            'Planning_Date' => $date,
-            'Quantity' => (float) ($row['Quantity'] ?? 0),
-            // Alias: in de UI/BC vaak “Amount” voor urenhoeveelheid
-            'Amount' => (float) ($row['Quantity'] ?? 0),
-        ];
+        $appendRows(odata_get_all($sourceUrl, $auth, 1, 180));
+        return $byJob;
     }
+
+    // Per batch van projecten: kleinere filters, tussentijds time-limit verversen
+    $batchSize = 20;
+    for ($i = 0; $i < count($jobNos); $i += $batchSize) {
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(300);
+        }
+        $batch = array_slice($jobNos, $i, $batchSize);
+        $jobFilter = implode(' or ', array_map(
+            fn($no) => "Job_No eq '" . str_replace("'", "''", $no) . "'",
+            $batch
+        ));
+        $filter = '(' . $jobFilter . ") and Type eq 'Resource'";
+        $url = $base . "Job_Planning_Lines?\$select=Job_No,Job_Task_No,Line_No,Type,No,Description,Planning_Date,Quantity&\$filter="
+            . rawurlencode($filter)
+            . "&\$format=json";
+        $hashPath = cache_path_for_key(build_cache_key($url, $auth));
+        if (is_file($hashPath)) {
+            @unlink($hashPath);
+        }
+        try {
+            $appendRows(odata_get_all($url, $auth, 1, 180));
+        } catch (Throwable $e) {
+            // Batch overslaan i.p.v. hele nightly laten crashen
+            continue;
+        }
+    }
+
     return $byJob;
 }
 
@@ -1782,17 +1848,15 @@ function planning_lines_for_project(string $projectNo, string $base = '', array 
     $rows = [];
     try {
         foreach (odata_get_all($url, $auth, 60) as $row) {
-            $rows[] = [
-                'Job_No' => $projectNo,
-                'Job_Task_No' => (string) ($row['Job_Task_No'] ?? ''),
-                'Line_No' => (int) ($row['Line_No'] ?? 0),
-                'Type' => 'Resource',
-                'No' => trim((string) ($row['No'] ?? '')),
-                'Description' => (string) ($row['Description'] ?? ''),
-                'Planning_Date' => substr((string) ($row['Planning_Date'] ?? ''), 0, 10),
-                'Quantity' => (float) ($row['Quantity'] ?? 0),
-                'Amount' => (float) ($row['Quantity'] ?? 0),
-            ];
+            if (!is_array($row)) {
+                continue;
+            }
+            $row['Job_No'] = $projectNo;
+            $row['Type'] = 'Resource';
+            $norm = planning_line_normalize_row($row);
+            if ($norm !== null) {
+                $rows[] = $norm;
+            }
         }
     } catch (Throwable $e) {
         return [];
@@ -1806,12 +1870,16 @@ function planning_lines_for_project(string $projectNo, string $base = '', array 
  */
 function projects_nightly_refresh(string $base, array $auth): array
 {
+    if (function_exists('set_time_limit')) {
+        @set_time_limit(0);
+    }
+
     $sourceUrl = $base . "AppProjecten?\$select=No,Description,Your_Reference,LVS_Bill_to_Name,LVS_Main_Entity,LVS_Main_Entity_Description,LVS_Job_Location&\$orderby=No&\$format=json";
     $hashPath = cache_path_for_key(build_cache_key($sourceUrl, $auth));
     if (is_file($hashPath)) {
         @unlink($hashPath);
     }
-    $projects = odata_get_all($sourceUrl, $auth, 1);
+    $projects = odata_get_all($sourceUrl, $auth, 1, 180);
 
     $entityUrl = $base . "LVS_MainEntityCard?\$select=No,Description,KVT_Customer_Description,KVT_Address,KVT_Address_2,KVT_Post_Code,KVT_City&\$format=json";
     $entityHash = cache_path_for_key(build_cache_key($entityUrl, $auth));
@@ -1820,7 +1888,7 @@ function projects_nightly_refresh(string $base, array $auth): array
     }
     $entities = [];
     try {
-        foreach (odata_get_all($entityUrl, $auth, 1) as $entity) {
+        foreach (odata_get_all($entityUrl, $auth, 1, 180) as $entity) {
             $no = trim((string) ($entity['No'] ?? ''));
             if ($no !== '') {
                 $entities[$no] = $entity;
@@ -1837,7 +1905,7 @@ function projects_nightly_refresh(string $base, array $auth): array
     }
     $jobs = [];
     try {
-        foreach (odata_get_all($jobUrl, $auth, 1) as $job) {
+        foreach (odata_get_all($jobUrl, $auth, 1, 180) as $job) {
             $no = trim((string) ($job['No'] ?? ''));
             if ($no !== '') {
                 $jobs[$no] = $job;
@@ -1847,17 +1915,33 @@ function projects_nightly_refresh(string $base, array $auth): array
         // JobCard optioneel
     }
 
+    $projectNos = [];
+    foreach ($projects as $project) {
+        $no = trim((string) ($project['No'] ?? ''));
+        if ($no !== '') {
+            $projectNos[] = $no;
+        }
+    }
+
     $planningByJob = [];
     $planningCount = 0;
     $planningSource = $base . "Job_Planning_Lines?\$filter=Type eq 'Resource'";
     try {
+        // Eerst één gefilterde query (paginatie + curl-timeout). Bij falen: batches per project.
         $planningByJob = planning_lines_nightly_fetch($base, $auth);
-        foreach ($planningByJob as $list) {
-            $planningCount += count($list);
-        }
-        planning_lines_nightly_write($planningByJob, $planningSource);
     } catch (Throwable $e) {
-        $planningByJob = [];
+        try {
+            $planningByJob = planning_lines_nightly_fetch($base, $auth, $projectNos);
+            $planningSource .= ' (batched fallback)';
+        } catch (Throwable $e2) {
+            $planningByJob = [];
+        }
+    }
+    foreach ($planningByJob as $list) {
+        $planningCount += count($list);
+    }
+    if ($planningCount > 0 || count($planningByJob) > 0) {
+        planning_lines_nightly_write($planningByJob, $planningSource);
     }
 
     $hourRanges = projects_nightly_compute_hour_ranges_from_planning($planningByJob);

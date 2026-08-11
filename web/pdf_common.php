@@ -404,18 +404,21 @@ function pdf_resolve_export_ts_no(array $report, array $tsNos): string
     $weekNo = (int) ($report['weekNo'] ?? 0);
     $year = (int) ($report['year'] ?? 0);
 
-    if (!empty($report['isHoraeOnly'])) {
-        return overrides_synthetic_ts_no($projectNo, $weekNo, $year);
-    }
-
     foreach ($tsNos as $tsNo) {
         if (overrides_parse_synthetic_ts_no($tsNo) !== null) {
             continue;
         }
-        return (string) $tsNo;
+        if (is_string($tsNo) && $tsNo !== '') {
+            return $tsNo;
+        }
     }
 
-    return overrides_synthetic_ts_no($projectNo, $weekNo, $year);
+    // Alleen synthetisch tsNo als er een geldige week is (multi-week planningsrapport: weekNo=0)
+    if ($weekNo >= 1 && $weekNo <= 53 && $projectNo !== '') {
+        return overrides_synthetic_ts_no($projectNo, $weekNo, $year);
+    }
+
+    return '';
 }
 
 function pdf_finalize_report(array &$report, string $reportKey, array $tsNos): void

@@ -31,6 +31,19 @@ $reportYear = (int) ($report['year'] ?? 0);
 $isHoraeOnly = !empty($report['isHoraeOnly']);
 $start = $weekInfo['start'] ?? null;
 $end = $weekInfo['end'] ?? null;
+// Voor overrides: als er geen enkele week op het rapport staat, pak de eerste persoonsweek
+$overrideWeekNo = $weekNo;
+$overrideYearNo = $reportYear;
+if ($overrideWeekNo < 1) {
+  foreach (($gridProject['people'] ?? ($report['gridProject']['people'] ?? [])) as $personRow) {
+    $pw = (int) ($personRow['week'] ?? 0);
+    if ($pw >= 1 && $pw <= 53) {
+      $overrideWeekNo = $pw;
+      $overrideYearNo = (int) ($personRow['sortYear'] ?? $reportYear);
+      break;
+    }
+  }
+}
 $signatures = $report['signatures'] ?? [
   'hoofdaannemer' => '',
   'onderaannemer' => '',
@@ -1031,7 +1044,7 @@ $exportQuery = http_build_query($exportQueryParams);
   <link rel="manifest" href="site.webmanifest">
 </head>
 
-<timesheet class="tight<?= $pdfExportMode ? ' is-printing export-pdf' : ' no-print' ?>" id="<?= h($timesheetDomId) ?>" data-project-no="<?= h($projectNo) ?>" data-project-nos="<?= h(json_encode(array_values($projectNosList), JSON_UNESCAPED_UNICODE)) ?>" data-week-no="<?= h((string) $weekNo) ?>" data-year-no="<?= h((string) $reportYear) ?>" data-horae-only="<?= $isHoraeOnly ? '1' : '0' ?>">
+<timesheet class="tight<?= $pdfExportMode ? ' is-printing export-pdf' : ' no-print' ?>" id="<?= h($timesheetDomId) ?>" data-project-no="<?= h($projectNo) ?>" data-project-nos="<?= h(json_encode(array_values($projectNosList), JSON_UNESCAPED_UNICODE)) ?>" data-week-no="<?= h((string) $overrideWeekNo) ?>" data-year-no="<?= h((string) ($overrideYearNo > 0 ? $overrideYearNo : $reportYear)) ?>" data-horae-only="<?= $isHoraeOnly ? '1' : '0' ?>">
   <script>
     // Print autoscale: schaal naar A4-printgebied (breedte én hoogte).
     const PRINT_AUTOSCALE_ENABLED = true;
@@ -1585,6 +1598,15 @@ $exportQuery = http_build_query($exportQueryParams);
         return Number(cell.dataset.saveYear || root.dataset.yearNo || 0);
       }
 
+      function resolveSaveWeek (cell)
+      {
+        let w = Number(cell && cell.dataset.saveWeek ? cell.dataset.saveWeek : (root.dataset.weekNo || 0));
+        if (w >= 1 && w <= 53) return w;
+        const el = root.querySelector('[data-save-week]');
+        w = el ? Number(el.dataset.saveWeek || 0) : 0;
+        return (w >= 1 && w <= 53) ? w : 0;
+      }
+
       function getCellDisplayValue (cell)
       {
         const clone = cell.cloneNode(true);
@@ -1752,12 +1774,17 @@ $exportQuery = http_build_query($exportQueryParams);
         if (!activeCell) return;
 
         const key = activeCell.dataset.overrideKey || '';
-        const saveWeek = Number(activeCell.dataset.saveWeek || root.dataset.weekNo || 0);
+        const saveWeek = resolveSaveWeek(activeCell);
         const saveYear = resolveSaveYear(activeCell);
         const value = reset ? null : modalInput.value;
 
         if (!reset && isHoursDayCell(activeCell) && !isValidHoursInput(modalInput.value)) {
           alert('Alleen getallen toegestaan (bijv. 8 of 8,5).');
+          return;
+        }
+
+        if (saveWeek < 1 || saveWeek > 53) {
+          alert('Geen geldig weeknummer voor deze overschrijving.');
           return;
         }
 
