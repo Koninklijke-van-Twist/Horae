@@ -69,7 +69,7 @@ function ts_td_attrs(string $key, string $label, string $value, array $originals
   if ($extraClass) {
     $class .= ' ' . trim($extraClass);
   }
-  return 'class="' . $class . '" data-override-key="' . h($key) . '" data-label="' . h($label) . '"' . $rowPart . $weekPart . $yearPart . ' data-original="' . h($original) . '" tabindex="0" role="button"';
+  return 'class="' . $class . '" data-override-key="' . h($key) . '" data-label="' . h($label) . '"' . $rowPart . $weekPart . $yearPart . ' data-original="' . h($original) . '" title="Klik om te bewerken" tabindex="0" role="button"';
 }
 
 function ts_render_value(string $value, bool $bold = false): string
@@ -343,6 +343,28 @@ $exportQuery = http_build_query($exportQueryParams);
       cursor: pointer;
       min-height: 20px;
       position: relative;
+      transition: background-color 0.12s ease, box-shadow 0.12s ease, outline-color 0.12s ease;
+    }
+
+    timesheet:not(.export-pdf) td.editable-cell:hover,
+    timesheet:not(.export-pdf) span.editable-cell:hover {
+      background-color: rgba(59, 130, 246, 0.18);
+      box-shadow:
+        inset 0 0 0 1px rgba(37, 99, 235, 0.55),
+        inset 0 0 10px 2px rgba(59, 130, 246, 0.22);
+      outline: 1px solid rgba(37, 99, 235, 0.35);
+      outline-offset: -1px;
+      z-index: 1;
+    }
+
+    timesheet:not(.export-pdf) td.editable-cell.has-override:hover,
+    timesheet:not(.export-pdf) span.editable-cell.has-override:hover {
+      background-color: rgba(34, 197, 94, 0.16);
+      box-shadow:
+        inset 0 0 0 1px rgba(22, 163, 74, 0.65),
+        inset 0 0 10px 2px rgba(22, 163, 74, 0.42),
+        inset 0 0 18px 6px rgba(74, 222, 128, 0.18);
+      outline-color: rgba(22, 163, 74, 0.45);
     }
 
     .sign-name-value.editable-cell {
