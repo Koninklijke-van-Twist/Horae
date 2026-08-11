@@ -178,6 +178,60 @@ function overrides_delete_week(string $projectNo, int $weekNo, int $year = 0): b
     return $deleted;
 }
 
+/**
+ * Leegt alle handmatige overrides voor de gegeven projecten (BC-waarden blijven leidend).
+ * @param list<string> $projectNos
+ * @return array{cleared:int,files:list<string>}
+ */
+function overrides_reset_for_projects(array $projectNos): array
+{
+    $dir = overrides_base_dir();
+    if (!is_dir($dir)) {
+        return ['cleared' => 0, 'files' => []];
+    }
+
+    $cleared = 0;
+    $files = [];
+    $seen = [];
+
+    foreach ($projectNos as $projectNo) {
+        $projectNo = trim((string) $projectNo);
+        if ($projectNo === '') {
+            continue;
+        }
+        $safeProject = str_replace(['/', '\\'], '_', overrides_sanitize_project_no($projectNo));
+        $matches = glob($dir . '/overrides-' . $safeProject . '-*.json') ?: [];
+        foreach ($matches as $path) {
+            $real = realpath($path) ?: $path;
+            if (isset($seen[$real])) {
+                continue;
+            }
+            $seen[$real] = true;
+
+            $raw = @file_get_contents($path);
+            if ($raw === false || $raw === '') {
+                continue;
+            }
+            $payload = json_decode($raw, true);
+            if (!is_array($payload)) {
+                continue;
+            }
+
+            $overrides = $payload['overrides'] ?? null;
+            if (!is_array($overrides) || count($overrides) === 0) {
+                continue;
+            }
+
+            $payload['overrides'] = [];
+            overrides_write($payload);
+            $cleared++;
+            $files[] = basename($path);
+        }
+    }
+
+    return ['cleared' => $cleared, 'files' => $files];
+}
+
 function overrides_set_value(string $projectNo, int $weekNo, string $key, ?string $value, int $year = 0): array
 {
     $payload = overrides_read($projectNo, $weekNo, $year);
@@ -709,6 +763,42 @@ function overrides_handle_api(string $action): void
         }
 
         overrides_send_json(['ok' => true, 'deleted' => true]);
+    }
+
+    if ($action === 'override_reset_all') {
+        $input = json_decode((string) file_get_contents('php://input'), true);
+        if (!is_array($input)) {
+            overrides_send_json(['ok' => false, 'error' => 'Ongeldige JSON'], 400);
+        }
+
+        $projectNos = $input['projectNos'] ?? ($input['projectNo'] ?? []);
+        if (!is_array($projectNos)) {
+            $projectNos = [$projectNos];
+        }
+        $projectNos = array_values(array_filter(array_map(
+            fn($v) => trim((string) $v),
+            $projectNos
+        ), fn($v) => $v !== ''));
+
+        if (count($projectNos) === 0) {
+            overrides_send_json(['ok' => false, 'error' => 'Geen project geselecteerd'], 400);
+        }
+
+        try {
+            foreach ($projectNos as $projectNo) {
+                overrides_sanitize_project_no($projectNo);
+            }
+            $result = overrides_reset_for_projects($projectNos);
+        } catch (Throwable $e) {
+            overrides_send_json(['ok' => false, 'error' => $e->getMessage()], 400);
+        }
+
+        overrides_send_json([
+            'ok' => true,
+            'cleared' => (int) ($result['cleared'] ?? 0),
+            'files' => $result['files'] ?? [],
+            'reload' => true,
+        ]);
     }
 
     if ($action === 'override_row_add') {

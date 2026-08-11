@@ -1615,72 +1615,194 @@ function projects_nightly_get(string $projectNo): ?array
 }
 
 /**
+ * Startdatum = vroegste Planning_Date, einddatum = laatste Planning_Date
+ * uit Type=Resource Job Planning Lines (per Job_No).
  * @return array<string, array{start:?string,end:?string}>
  */
-function projects_nightly_compute_hour_ranges(string $base, array $auth): array
+function projects_nightly_compute_hour_ranges_from_planning(array $linesByJob): array
 {
-    $tsUrl = $base . "Urenstaten?\$select=No,Starting_Date&\$format=json";
-    $tsHash = cache_path_for_key(build_cache_key($tsUrl, $auth));
-    if (is_file($tsHash)) {
-        @unlink($tsHash);
-    }
-    $timesheets = odata_get_all($tsUrl, $auth, 1);
-    $tsStart = [];
-    foreach ($timesheets as $ts) {
-        $no = (string) ($ts['No'] ?? '');
-        $start = (string) ($ts['Starting_Date'] ?? '');
-        if ($no !== '' && preg_match('/^\d{4}-\d{2}-\d{2}/', $start)) {
-            $tsStart[$no] = substr($start, 0, 10);
-        }
-    }
-
-    $rulesUrl = $base . "Urenstaatregels?\$select=Time_Sheet_No,Job_No,Field1,Field2,Field3,Field4,Field5,Field6,Field7&\$filter="
-        . rawurlencode("Work_Type_Code ne 'KM'")
-        . "&\$format=json";
-    $rulesHash = cache_path_for_key(build_cache_key($rulesUrl, $auth));
-    if (is_file($rulesHash)) {
-        @unlink($rulesHash);
-    }
-    $rules = odata_get_all($rulesUrl, $auth, 1);
-
     $ranges = [];
-    foreach ($rules as $rule) {
-        $jobNo = trim((string) ($rule['Job_No'] ?? ''));
-        $tsNo = (string) ($rule['Time_Sheet_No'] ?? '');
-        if ($jobNo === '' || $tsNo === '' || !isset($tsStart[$tsNo])) {
+    foreach ($linesByJob as $jobNo => $lines) {
+        $jobNo = (string) $jobNo;
+        if ($jobNo === '') {
             continue;
         }
-        $weekStart = $tsStart[$tsNo];
-        $baseTs = strtotime($weekStart . ' 12:00:00');
-        if ($baseTs === false) {
-            continue;
-        }
-        for ($i = 1; $i <= 7; $i++) {
-            $hours = (float) ($rule['Field' . $i] ?? 0);
-            if (abs($hours) < 0.00001) {
+        foreach ($lines as $line) {
+            $date = substr((string) ($line['Planning_Date'] ?? ''), 0, 10);
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
                 continue;
             }
-            $day = date('Y-m-d', $baseTs + (($i - 1) * 86400));
             if (!isset($ranges[$jobNo])) {
-                $ranges[$jobNo] = ['start' => $day, 'end' => $day];
+                $ranges[$jobNo] = ['start' => $date, 'end' => $date];
                 continue;
             }
-            if ($day < $ranges[$jobNo]['start']) {
-                $ranges[$jobNo]['start'] = $day;
+            if ($date < $ranges[$jobNo]['start']) {
+                $ranges[$jobNo]['start'] = $date;
             }
-            if ($day > $ranges[$jobNo]['end']) {
-                $ranges[$jobNo]['end'] = $day;
+            if ($date > $ranges[$jobNo]['end']) {
+                $ranges[$jobNo]['end'] = $date;
             }
         }
     }
-
     return $ranges;
 }
 
+/** @return array{start:?string,end:?string} */
+function planning_lines_date_range(array $lines): array
+{
+    $start = null;
+    $end = null;
+    foreach ($lines as $line) {
+        $date = substr((string) ($line['Planning_Date'] ?? ''), 0, 10);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            continue;
+        }
+        if ($start === null || $date < $start) {
+            $start = $date;
+        }
+        if ($end === null || $date > $end) {
+            $end = $date;
+        }
+    }
+    return ['start' => $start, 'end' => $end];
+}
+
+function planning_lines_nightly_cache_path(): string
+{
+    require __DIR__ . '/auth.php';
+    $env = preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) ($environment ?? 'default'));
+    if ($env === '') {
+        $env = 'default';
+    }
+    return cache_base_dir() . '/planning_lines_nightly_' . $env . '.json';
+}
+
 /**
- * Haalt AppProjecten + servicelocatie + urenbereik op en schrijft de nightly-cache (24u).
- * Servicelocatie = LVS_MainEntityCard via AppProjecten.LVS_Main_Entity (No).
- * @return array{ok:bool,count:int,path:string,cached_at:int,expires_at:int,source_url:string}
+ * Haalt alle Job_Planning_Lines met Type=Resource op, gegroepeerd per Job_No.
+ * Quantity = uren (BC “Amount”/hoeveelheid bij Resource).
+ * @return array<string, list<array<string,mixed>>>
+ */
+function planning_lines_nightly_fetch(string $base, array $auth): array
+{
+    $sourceUrl = $base . "Job_Planning_Lines?\$select=Job_No,Job_Task_No,Line_No,Type,No,Description,Planning_Date,Quantity&\$filter="
+        . rawurlencode("Type eq 'Resource'")
+        . "&\$format=json";
+    $hashPath = cache_path_for_key(build_cache_key($sourceUrl, $auth));
+    if (is_file($hashPath)) {
+        @unlink($hashPath);
+    }
+    $raw = odata_get_all($sourceUrl, $auth, 1);
+    $byJob = [];
+    foreach ($raw as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $jobNo = trim((string) ($row['Job_No'] ?? ''));
+        $type = trim((string) ($row['Type'] ?? ''));
+        if ($jobNo === '' || strcasecmp($type, 'Resource') !== 0) {
+            continue;
+        }
+        $date = substr((string) ($row['Planning_Date'] ?? ''), 0, 10);
+        $byJob[$jobNo][] = [
+            'Job_No' => $jobNo,
+            'Job_Task_No' => (string) ($row['Job_Task_No'] ?? ''),
+            'Line_No' => (int) ($row['Line_No'] ?? 0),
+            'Type' => 'Resource',
+            'No' => trim((string) ($row['No'] ?? '')),
+            'Description' => (string) ($row['Description'] ?? ''),
+            'Planning_Date' => $date,
+            'Quantity' => (float) ($row['Quantity'] ?? 0),
+            // Alias: in de UI/BC vaak “Amount” voor urenhoeveelheid
+            'Amount' => (float) ($row['Quantity'] ?? 0),
+        ];
+    }
+    return $byJob;
+}
+
+function planning_lines_nightly_write(array $byJob, string $sourceUrl = ''): void
+{
+    write_cache_json(planning_lines_nightly_cache_path(), $byJob, projects_nightly_ttl(), $sourceUrl);
+}
+
+/**
+ * @return array{valid:bool,byJob:array<string,list<array<string,mixed>>>,cached_at:int,expires_at:int}
+ */
+function planning_lines_nightly_read(bool $allowExpired = false): array
+{
+    $path = planning_lines_nightly_cache_path();
+    if (!is_file($path)) {
+        return ['valid' => false, 'byJob' => [], 'cached_at' => 0, 'expires_at' => 0];
+    }
+
+    $raw = @file_get_contents($path);
+    if ($raw === false || $raw === '') {
+        return ['valid' => false, 'byJob' => [], 'cached_at' => 0, 'expires_at' => 0];
+    }
+
+    $payload = json_decode($raw, true);
+    if (!is_array($payload) || !isset($payload['data']) || !is_array($payload['data'])) {
+        return ['valid' => false, 'byJob' => [], 'cached_at' => 0, 'expires_at' => 0];
+    }
+
+    $meta = is_array($payload['_meta'] ?? null) ? $payload['_meta'] : [];
+    $cachedAt = (int) ($meta['cached_at'] ?? 0);
+    $expiresAt = (int) ($meta['expires_at'] ?? 0);
+    $fresh = $expiresAt <= 0 || time() <= $expiresAt;
+    if (!$fresh && !$allowExpired) {
+        return ['valid' => false, 'byJob' => [], 'cached_at' => $cachedAt, 'expires_at' => $expiresAt];
+    }
+
+    return [
+        'valid' => true,
+        'byJob' => $payload['data'],
+        'cached_at' => $cachedAt,
+        'expires_at' => $expiresAt,
+    ];
+}
+
+/** @return list<array<string,mixed>> */
+function planning_lines_for_project(string $projectNo, string $base = '', array $auth = []): array
+{
+    $projectNo = trim($projectNo);
+    if ($projectNo === '') {
+        return [];
+    }
+
+    $cached = planning_lines_nightly_read(true);
+    if ($cached['valid'] && isset($cached['byJob'][$projectNo]) && is_array($cached['byJob'][$projectNo])) {
+        return $cached['byJob'][$projectNo];
+    }
+
+    if ($base === '' || $auth === []) {
+        return [];
+    }
+
+    $filter = rawurlencode("Job_No eq '" . str_replace("'", "''", $projectNo) . "' and Type eq 'Resource'");
+    $url = $base . "Job_Planning_Lines?\$select=Job_No,Job_Task_No,Line_No,Type,No,Description,Planning_Date,Quantity&\$filter={$filter}&\$format=json";
+    $rows = [];
+    try {
+        foreach (odata_get_all($url, $auth, 60) as $row) {
+            $rows[] = [
+                'Job_No' => $projectNo,
+                'Job_Task_No' => (string) ($row['Job_Task_No'] ?? ''),
+                'Line_No' => (int) ($row['Line_No'] ?? 0),
+                'Type' => 'Resource',
+                'No' => trim((string) ($row['No'] ?? '')),
+                'Description' => (string) ($row['Description'] ?? ''),
+                'Planning_Date' => substr((string) ($row['Planning_Date'] ?? ''), 0, 10),
+                'Quantity' => (float) ($row['Quantity'] ?? 0),
+                'Amount' => (float) ($row['Quantity'] ?? 0),
+            ];
+        }
+    } catch (Throwable $e) {
+        return [];
+    }
+    return $rows;
+}
+
+/**
+ * Haalt AppProjecten + servicelocatie + Job Planning Lines (Resource) op en schrijft de nightly-cache (24u).
+ * @return array{ok:bool,count:int,planningLines:int,path:string,cached_at:int,expires_at:int,source_url:string}
  */
 function projects_nightly_refresh(string $base, array $auth): array
 {
@@ -1705,7 +1827,7 @@ function projects_nightly_refresh(string $base, array $auth): array
             }
         }
     } catch (Throwable $e) {
-        // Servicelocatie-tabel optioneel; projecten blijven bruikbaar zonder
+        // Servicelocatie-tabel optioneel
     }
 
     $jobUrl = $base . "JobCard?\$select=No,Sell_to_Address,Sell_to_Post_Code,Sell_to_City,LVS_Bill_to_Name,Bill_to_Name&\$format=json";
@@ -1725,12 +1847,20 @@ function projects_nightly_refresh(string $base, array $auth): array
         // JobCard optioneel
     }
 
-    $hourRanges = [];
+    $planningByJob = [];
+    $planningCount = 0;
+    $planningSource = $base . "Job_Planning_Lines?\$filter=Type eq 'Resource'";
     try {
-        $hourRanges = projects_nightly_compute_hour_ranges($base, $auth);
+        $planningByJob = planning_lines_nightly_fetch($base, $auth);
+        foreach ($planningByJob as $list) {
+            $planningCount += count($list);
+        }
+        planning_lines_nightly_write($planningByJob, $planningSource);
     } catch (Throwable $e) {
-        $hourRanges = [];
+        $planningByJob = [];
     }
+
+    $hourRanges = projects_nightly_compute_hour_ranges_from_planning($planningByJob);
 
     $rows = [];
     foreach ($projects as $project) {
@@ -1788,6 +1918,7 @@ function projects_nightly_refresh(string $base, array $auth): array
     return [
         'ok' => true,
         'count' => count($rows),
+        'planningLines' => $planningCount,
         'path' => $path,
         'cached_at' => $now,
         'expires_at' => $now + $ttl,
@@ -1986,7 +2117,7 @@ if (odata_is_direct_request() && $odataAction === 'projects_batch') {
 if (odata_is_direct_request() && $odataAction === 'projects_search') {
     odata_send_projects_search_json();
 }
-if (odata_is_direct_request() && in_array($odataAction, ['override_get', 'override_save', 'override_create_week', 'override_delete_week', 'override_row_add', 'override_row_delete', 'override_row_restore'], true)) {
+if (odata_is_direct_request() && in_array($odataAction, ['override_get', 'override_save', 'override_create_week', 'override_delete_week', 'override_reset_all', 'override_row_add', 'override_row_delete', 'override_row_restore'], true)) {
     require __DIR__ . '/overrides.php';
     overrides_handle_api($odataAction);
 }

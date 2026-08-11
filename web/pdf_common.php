@@ -98,7 +98,8 @@ function pdf_load_resources_for_lines(array $lines, string $baseApp, array $auth
 {
     $needed = [];
     foreach ($lines as $l) {
-        $no = (string) ($l['Header_Resource_No'] ?? '');
+        // Urenstaatregels: Header_Resource_No; Job Planning Lines: No
+        $no = trim((string) ($l['Header_Resource_No'] ?? $l['No'] ?? ''));
         if ($no !== '') {
             $needed[$no] = true;
         }
@@ -271,19 +272,11 @@ function pdf_project_meta_from_cache(string $projectNo, string $baseApp, array $
     ];
 }
 
-function pdf_build_report_for_project(string $projectNo, array $tsRows, array $lines, array $projectNos, string $baseApp, array $auth): array
+function pdf_build_report_for_project(string $projectNo, array $projectNos, string $baseApp, array $auth): array
 {
-    foreach ($lines as &$l) {
-        foreach ($tsRows as $tsr) {
-            if ($tsr['No'] == $l['Time_Sheet_No']) {
-                $l['Week'] = $tsr['Description'];
-            }
-        }
-    }
-    unset($l);
-
+    $lines = planning_lines_for_project($projectNo, $baseApp, $auth);
     [$resourcesByNo, $employeesByNo] = pdf_load_resources_for_lines($lines, $baseApp, $auth);
-    $grid = build_timesheet_grid_from_fields($lines, $resourcesByNo, $employeesByNo, $projectNos, $tsRows);
+    $grid = build_grid_from_planning_lines($lines, $resourcesByNo, $employeesByNo, [$projectNo]);
     $gridProject = $grid['projects'][$projectNo] ?? [
         'projectNo' => $projectNo,
         'people' => [],
@@ -293,34 +286,25 @@ function pdf_build_report_for_project(string $projectNo, array $tsRows, array $l
 
     $meta = pdf_project_meta_from_cache($projectNo, $baseApp, $auth);
 
-    $weekNo = 0;
+    $weekSlots = [];
+    $year = 0;
     foreach ($gridProject['people'] as $person) {
-        if ($weekNo === 0) {
-            $weekNo = (int) ($person['week'] ?? 0);
+        $personWeek = (int) ($person['week'] ?? 0);
+        $personYear = (int) ($person['sortYear'] ?? 0);
+        if ($personWeek > 0) {
+            $weekSlots[$personYear . '|' . $personWeek] = $personWeek;
         }
-    }
-    if ($weekNo === 0 && count($tsRows) > 0) {
-        $weekNo = pdf_extract_week_no($tsRows[0]);
+        if ($year === 0 && $personYear > 0) {
+            $year = $personYear;
+        }
     }
 
-    $startDate = $meta['hoursStart'] ?? null;
-    $endDate = $meta['hoursEnd'] ?? null;
-    if (!$startDate || !$endDate) {
-        // Fallback: weekdatums uit urenstaat als nightly-bereik ontbreekt
-        $wL = PHP_INT_MAX;
-        $wH = -1;
-        foreach ($gridProject['people'] as $person) {
-            $week = (int) ($person['week'] ?? 0) + (52 * (int) ($person['sortYear'] ?? 0));
-            if ($week > $wH) {
-                $wH = $week;
-                $endDate = $person['endDate'] ?? $endDate;
-            }
-            if ($week < $wL) {
-                $wL = $week;
-                $startDate = $person['startDate'] ?? $startDate;
-            }
-        }
-    }
+    $weekNo = count($weekSlots) === 1 ? (int) reset($weekSlots) : 0;
+
+    // Projectstart/-eind = vroegste / laatste Planning_Date uit Resource-regels
+    $dateRange = planning_lines_date_range($lines);
+    $startDate = $dateRange['start'] ?? $meta['hoursStart'] ?? null;
+    $endDate = $dateRange['end'] ?? $meta['hoursEnd'] ?? null;
 
     $totals = ['days' => array_fill(0, 7, 0.0), 'all' => 0.0];
     foreach ($gridProject['people'] as $p) {
@@ -334,6 +318,8 @@ function pdf_build_report_for_project(string $projectNo, array $tsRows, array $l
         'projectNo' => $projectNo,
         'projectNos' => [$projectNo],
         'weekNo' => $weekNo,
+        'year' => $year,
+        'isHoraeOnly' => false,
         'weekInfo' => [
             'week' => $weekNo,
             'start' => $startDate ?: 'onbekend',
@@ -357,29 +343,18 @@ function pdf_build_report_for_project(string $projectNo, array $tsRows, array $l
 
 function pdf_build_synthetic_report(string $projectNo, int $weekNo, int $year, array $projectNos, string $baseApp, array $auth): array
 {
-    $syntheticTsNo = overrides_synthetic_ts_no($projectNo, $weekNo, $year);
-    $fakeTs = [
-        'No' => $syntheticTsNo,
-        'Description' => 'Week ' . $weekNo,
-        'Starting_Date' => null,
-        'Ending_Date' => null,
-    ];
-
-    $rulesFilter = rawurlencode("Job_No eq '" . str_replace("'", "''", $projectNo) . "' and Work_Type_Code ne 'KM'");
-    $linesUrl = $baseApp . "Urenstaatregels?\$select=Time_Sheet_No,Job_No,Work_Type_Code,Header_Resource_No,Field1,Field2,Field3,Field4,Field5,Field6,Field7,Total_Quantity&\$filter={$rulesFilter}&\$format=json";
-    $lines = odata_get_all($linesUrl, $auth, 60);
-
-    [$resourcesByNo, $employeesByNo] = pdf_load_resources_for_lines($lines, $baseApp, $auth);
-    $people = pdf_build_people_from_project_lines($lines, $resourcesByNo, $employeesByNo, $projectNo, $weekNo, $year);
+    // Horae-only week zonder BC-planning: lege grid; overrides vullen rijen later.
+    $meta = pdf_project_meta_from_cache($projectNo, $baseApp, $auth);
+    $mondayTs = strtotime($year . 'W' . str_pad((string) $weekNo, 2, '0', STR_PAD_LEFT));
+    $weekStart = $mondayTs ? date('Y-m-d', $mondayTs) : ($meta['hoursStart'] ?? 'onbekend');
+    $weekEnd = $mondayTs ? date('Y-m-d', $mondayTs + 6 * 86400) : ($meta['hoursEnd'] ?? 'onbekend');
 
     $gridProject = [
         'projectNo' => $projectNo,
-        'people' => $people,
+        'people' => [],
         'multiYear' => false,
         'totals' => ['days' => array_fill(0, 7, 0.0), 'all' => 0.0],
     ];
-
-    $meta = pdf_project_meta_from_cache($projectNo, $baseApp, $auth);
 
     return [
         'projectNo' => $projectNo,
@@ -389,8 +364,8 @@ function pdf_build_synthetic_report(string $projectNo, int $weekNo, int $year, a
         'isHoraeOnly' => true,
         'weekInfo' => [
             'week' => $weekNo,
-            'start' => $meta['hoursStart'] ?? 'onbekend',
-            'end' => $meta['hoursEnd'] ?? 'onbekend',
+            'start' => $weekStart ?: 'onbekend',
+            'end' => $weekEnd ?: 'onbekend',
         ],
         'contractor' => $meta['contractor'],
         'serviceLocation' => $meta['serviceLocation'],
@@ -562,14 +537,33 @@ function pdf_merge_reports(array $reports, array $projectNos): array
     }
 
     $primary = array_values($reports)[0];
-    $start = pdf_pick_first_non_blank($starts);
-    $end = pdf_pick_first_non_blank($ends);
+    // Samengevoegd: vroegste startdatum / laatste einddatum over alle projecten
+    $start = '';
+    $end = '';
+    foreach ($starts as $s) {
+        $s = trim((string) $s);
+        if ($s === '' || $s === 'onbekend') {
+            continue;
+        }
+        if ($start === '' || $s < $start) {
+            $start = $s;
+        }
+    }
+    foreach ($ends as $e) {
+        $e = trim((string) $e);
+        if ($e === '' || $e === 'onbekend') {
+            continue;
+        }
+        if ($end === '' || $e > $end) {
+            $end = $e;
+        }
+    }
 
-    // Bij conflicterende datums: eerste niet-blanco (volgorde projectlijst)
-    if (count(array_unique(array_filter(array_map('strval', $starts)))) > 1) {
+    // Alleen conflict markeren als datums echt verschillen (info; we nemen min/max)
+    if (count(array_unique(array_filter(array_map('strval', $starts), fn($v) => $v !== '' && $v !== 'onbekend'))) > 1) {
         $conflicts[] = 'weekInfo.start';
     }
-    if (count(array_unique(array_filter(array_map('strval', $ends)))) > 1) {
+    if (count(array_unique(array_filter(array_map('strval', $ends), fn($v) => $v !== '' && $v !== 'onbekend'))) > 1) {
         $conflicts[] = 'weekInfo.end';
     }
 
@@ -613,68 +607,33 @@ function pdf_merge_reports(array $reports, array $projectNos): array
 
 function pdf_load_reports(string $baseApp, array $auth, array $query): array
 {
-    $tsNos = $query['tsNo'] ?? '';
     $projectNos = $query['projectNo'] ?? [];
     if (!is_array($projectNos)) {
         $projectNos = [$projectNos];
     }
     $projectNos = array_values(array_filter(array_map('trim', $projectNos), fn($x) => $x !== ''));
 
-    if (!is_array($tsNos) || count($tsNos) === 0) {
-        throw new InvalidArgumentException('Geen weken geselecteerd');
+    if (count($projectNos) === 0) {
+        throw new InvalidArgumentException('Geen project geselecteerd');
     }
 
-    $tsNos = array_values(array_filter($tsNos, fn($v) => is_string($v) && $v !== ''));
-
+    // Optioneel: synthetische Horae-weken via tsNo (legacy / overrides)
+    $tsNosRaw = $query['tsNo'] ?? [];
+    if (!is_array($tsNosRaw)) {
+        $tsNosRaw = $tsNosRaw !== '' && $tsNosRaw !== null ? [$tsNosRaw] : [];
+    }
+    $tsNos = array_values(array_filter($tsNosRaw, fn($v) => is_string($v) && $v !== ''));
     $syntheticRequests = [];
-    $bcTsNos = [];
-
     foreach ($tsNos as $tsNo) {
         $parsed = overrides_parse_synthetic_ts_no($tsNo);
         if ($parsed !== null) {
             $syntheticRequests[] = $parsed;
-        } else {
-            $bcTsNos[] = $tsNo;
         }
-    }
-
-    $tsRows = [];
-    $lines = [];
-
-    if (count($bcTsNos) > 0) {
-        $parts = array_map(
-            fn($no) => "No eq '" . str_replace("'", "''", $no) . "'",
-            $bcTsNos
-        );
-        $tsFilter = rawurlencode(implode(' or ', $parts));
-        $tsUrl = $baseApp . "Urenstaten?\$select=No,Starting_Date,Ending_Date,Description,Resource_No,Resource_Name,Job_No_Filter&\$filter={$tsFilter}&\$format=json";
-        $tsRows = odata_get_all($tsUrl, $auth, 60);
-
-        $lineParts = array_map(
-            fn($no) => "Time_Sheet_No eq '" . str_replace("'", "''", $no) . "'",
-            $bcTsNos
-        );
-        $lineFilter = rawurlencode(implode(' or ', $lineParts));
-        $linesUrl = $baseApp . "Urenstaatregels?\$select=Time_Sheet_No,Job_No,Work_Type_Code,Header_Resource_No,Field1,Field2,Field3,Field4,Field5,Field6,Field7,Total_Quantity&\$filter={$lineFilter}&\$format=json";
-        $lines = odata_get_all($linesUrl, $auth, 60);
     }
 
     $partialReports = [];
-
     foreach ($projectNos as $projectNo) {
-        $projectTsRows = array_values(array_filter($tsRows, function ($row) use ($projectNo, $lines) {
-            $no = (string) ($row['No'] ?? '');
-            foreach ($lines as $line) {
-                if ((string) ($line['Time_Sheet_No'] ?? '') === $no && (string) ($line['Job_No'] ?? '') === $projectNo) {
-                    return true;
-                }
-            }
-            return (string) ($row['Job_No_Filter'] ?? '') === $projectNo;
-        }));
-
-        if (count($projectTsRows) > 0 || count(array_filter($lines, fn($l) => ($l['Job_No'] ?? '') === $projectNo)) > 0) {
-            $partialReports[] = pdf_build_report_for_project($projectNo, $projectTsRows, $lines, $projectNos, $baseApp, $auth);
-        }
+        $partialReports[] = pdf_build_report_for_project($projectNo, $projectNos, $baseApp, $auth);
     }
 
     foreach ($syntheticRequests as $req) {
@@ -687,9 +646,6 @@ function pdf_load_reports(string $baseApp, array $auth, array $query): array
         $partialReports[] = pdf_build_synthetic_report($projectNo, $weekNo, $year, $projectNos, $baseApp, $auth);
     }
 
-    if (count($partialReports) === 0 && count($bcTsNos) > 0) {
-        throw new RuntimeException('Urenstaat niet gevonden');
-    }
     if (count($partialReports) === 0) {
         throw new RuntimeException('Geen rapport gevonden');
     }

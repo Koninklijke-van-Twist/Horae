@@ -280,7 +280,7 @@ require __DIR__ . "/logincheck.php";
       </div>
 
       <h1>Projectselectie</h1>
-      <p class="subtitle">Vink één of meerdere projecten aan (lijst uit AppProjecten, nachtelijke cache). Weken worden daarna uit urenstaatregels geladen.</p>
+      <p class="subtitle">Vink één of meerdere projecten aan.</p>
 
       <div class="progress-wrap" id="loadProgressWrap">
         <div class="progress-bar">
@@ -289,7 +289,7 @@ require __DIR__ . "/logincheck.php";
         <div class="progress-label" id="loadProgressLabel">Projecten laden…</div>
       </div>
 
-      <form method="get" action="weeks.php" onsubmit="return validateProjects()" id="projectForm">
+      <form method="get" action="pdf.php" onsubmit="return validateProjects()" id="projectForm">
         <div class="toolbar">
           <input class="search" id="projectSearch" type="text" placeholder="Zoek op projectnummer of omschrijving…"
             oninput="filterProjects()" disabled>
@@ -303,7 +303,7 @@ require __DIR__ . "/logincheck.php";
 
         <div class="footer">
           <div class="hint" id="projCountHint"></div>
-          <button class="btn-primary" type="submit" disabled id="btnNext">Volgende</button>
+          <button class="btn-primary" type="submit" disabled id="btnNext">Mandagenregister</button>
         </div>
       </form>
     </div>

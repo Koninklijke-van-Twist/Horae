@@ -69,24 +69,27 @@ function ts_render_value(string $value, bool $bold = false): string
 }
 
 $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
-$timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', implode('_', $projectNosList) . '_Y' . $reportYear . '_W' . $weekNo);
-$exportTsNos = $report['selectedTsNos'] ?? [$report['exportTsNo'] ?? overrides_synthetic_ts_no($projectNo, $weekNo, $reportYear)];
-if (!is_array($exportTsNos) || count($exportTsNos) === 0) {
-  $exportTsNos = [$report['exportTsNo'] ?? overrides_synthetic_ts_no($projectNo, $weekNo, $reportYear)];
+$timesheetDomId = preg_replace('/[^A-Za-z0-9_-]+/', '_', implode('_', $projectNosList) . '_plan');
+$exportTsNos = $report['selectedTsNos'] ?? [];
+if (!is_array($exportTsNos)) {
+  $exportTsNos = [];
 }
 $exportKey = $report['exportKey'] ?? $projectNo;
-$exportQuery = http_build_query([
+$exportQueryParams = [
   'projectNo' => array_values($projectNosList),
-  'tsNo' => array_values($exportTsNos),
   'exportKey' => $exportKey,
-]);
+];
+if (count($exportTsNos) > 0) {
+  $exportQueryParams['tsNo'] = array_values($exportTsNos);
+}
+$exportQuery = http_build_query($exportQueryParams);
 ?>
 <!doctype html>
 <html lang="nl">
 
 <head>
   <meta charset="utf-8">
-  <title>Urenstaat <?= h(implode(', ', $projectNosList)) ?> - Week <?= h($weekNo) ?></title>
+  <title>Mandagenregister <?= h(implode(', ', $projectNosList)) ?></title>
   <style>
     @page {
       size: A4 landscape;
@@ -640,6 +643,64 @@ $exportQuery = http_build_query([
       background: #fff5f5;
     }
 
+    .ts-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .ts-toolbar a {
+      text-decoration: none;
+    }
+
+    .ts-btn {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      color: #0f172a;
+      font: inherit;
+      font-weight: 700;
+      font-size: 13px;
+      line-height: 1;
+      cursor: pointer;
+      min-height: 32px;
+      padding: 0 12px;
+      border-radius: 8px;
+      box-sizing: border-box;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+
+    .ts-btn:hover {
+      background: #e2e8f0;
+      border-color: #94a3b8;
+    }
+
+    .ts-btn:focus-visible {
+      outline: 2px solid #64748b;
+      outline-offset: 2px;
+    }
+
+    .ts-btn-primary {
+      border-color: #93c5fd;
+      background: #eff6ff;
+      color: #1e3a8a;
+    }
+
+    .ts-btn-primary:hover {
+      background: #dbeafe;
+      border-color: #60a5fa;
+    }
+
+    .ts-btn-primary:focus-visible {
+      outline-color: #3b82f6;
+    }
+
+    .ts-btn-danger,
     .btn-delete-week {
       border: 1px solid #fecaca;
       background: #fff1f2;
@@ -648,10 +709,22 @@ $exportQuery = http_build_query([
       cursor: pointer;
       min-height: 32px;
       padding: 0 12px;
+      border-radius: 8px;
+      font: inherit;
+      font-size: 13px;
+      line-height: 1;
     }
 
+    .ts-btn-danger:hover,
     .btn-delete-week:hover {
       background: #ffe4e6;
+      border-color: #fca5a5;
+    }
+
+    .ts-btn-danger:focus-visible,
+    .btn-delete-week:focus-visible {
+      outline: 2px solid #ef4444;
+      outline-offset: 2px;
     }
 
     .delete-week-backdrop {
@@ -958,7 +1031,7 @@ $exportQuery = http_build_query([
   <link rel="manifest" href="site.webmanifest">
 </head>
 
-<timesheet class="tight<?= $pdfExportMode ? ' is-printing export-pdf' : ' no-print' ?>" id="<?= h($timesheetDomId) ?>" data-project-no="<?= h($projectNo) ?>" data-week-no="<?= h((string) $weekNo) ?>" data-year-no="<?= h((string) $reportYear) ?>" data-horae-only="<?= $isHoraeOnly ? '1' : '0' ?>">
+<timesheet class="tight<?= $pdfExportMode ? ' is-printing export-pdf' : ' no-print' ?>" id="<?= h($timesheetDomId) ?>" data-project-no="<?= h($projectNo) ?>" data-project-nos="<?= h(json_encode(array_values($projectNosList), JSON_UNESCAPED_UNICODE)) ?>" data-week-no="<?= h((string) $weekNo) ?>" data-year-no="<?= h((string) $reportYear) ?>" data-horae-only="<?= $isHoraeOnly ? '1' : '0' ?>">
   <script>
     // Print autoscale: schaal naar A4-printgebied (breedte én hoogte).
     const PRINT_AUTOSCALE_ENABLED = true;
@@ -1152,12 +1225,13 @@ $exportQuery = http_build_query([
   </script>
 
   <?php if (!$pdfExportMode): ?>
-  <div class="no-print" style="margin-bottom:10px;">
-    <button type="button" onclick="printOnly('<?= h($timesheetDomId) ?>')">Print</button>
-    <a href="pdf_export.php?<?= h($exportQuery) ?>"><button type="button">Opslaan als PDF</button></a>
-    <a href="."><button type="button">Terug naar beginscherm</button></a>
+  <div class="no-print ts-toolbar">
+    <button type="button" class="ts-btn" onclick="printOnly('<?= h($timesheetDomId) ?>')">Print</button>
+    <a href="pdf_export.php?<?= h($exportQuery) ?>"><button type="button" class="ts-btn ts-btn-primary">Opslaan als PDF</button></a>
+    <a href="."><button type="button" class="ts-btn">Terug naar beginscherm</button></a>
+    <button type="button" class="ts-btn ts-btn-danger" id="resetOverridesBtn-<?= h($timesheetDomId) ?>">Reset</button>
     <?php if ($isHoraeOnly): ?>
-      <button type="button" class="btn-delete-week" id="deleteWeekBtn-<?= h($timesheetDomId) ?>">Horae-week verwijderen</button>
+      <button type="button" class="ts-btn ts-btn-danger" id="deleteWeekBtn-<?= h($timesheetDomId) ?>">Horae-week verwijderen</button>
     <?php endif; ?>
   </div>
   <?php if (count($headerConflicts) > 0): ?>
@@ -1398,10 +1472,28 @@ $exportQuery = http_build_query([
   </div>
   </div>
 
+  <?php if (!$pdfExportMode): ?>
+  <div class="delete-week-backdrop no-print" id="resetOverridesModal-<?= h($timesheetDomId) ?>" aria-hidden="true">
+    <div class="delete-week-modal" role="dialog" aria-modal="true">
+      <div class="delete-week-stripes" aria-hidden="true"></div>
+      <div class="delete-week-body">
+        <p>
+          Dit herstelt alle aangepaste waardes naar hun waardes zoals ze in BC staan.
+          Het maakt uw wijzigingen permanent ongedaan. Weet u het zeker?
+        </p>
+        <div class="delete-week-actions">
+          <button type="button" class="override-btn" id="resetOverridesCancel-<?= h($timesheetDomId) ?>">Annuleren</button>
+          <button type="button" class="delete-week-confirm" id="resetOverridesConfirm-<?= h($timesheetDomId) ?>">Resetten</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <?php endif; ?>
+
   <?php if (!$pdfExportMode && $isHoraeOnly): ?>
   <div class="delete-week-backdrop no-print" id="deleteWeekModal-<?= h($timesheetDomId) ?>" aria-hidden="true">
     <div class="delete-week-modal" role="dialog" aria-modal="true">
-      <div class="delete-week-stripes"></div>
+      <div class="delete-week-stripes" aria-hidden="true"></div>
       <div class="delete-week-body">
         <h2>Horae-week definitief verwijderen</h2>
         <p>
@@ -1452,6 +1544,15 @@ $exportQuery = http_build_query([
       if (!root) return;
 
       const projectNo = root.dataset.projectNo || '';
+      let projectNos = [];
+      try {
+        projectNos = JSON.parse(root.dataset.projectNos || '[]');
+      } catch (e) {
+        projectNos = [];
+      }
+      if (!Array.isArray(projectNos) || projectNos.length === 0) {
+        projectNos = projectNo ? [projectNo] : [];
+      }
       const weekNo = Number(root.dataset.weekNo || 0);
       const yearNo = Number(root.dataset.yearNo || 0);
       const isHoraeOnly = root.dataset.horaeOnly === '1';
@@ -1462,6 +1563,10 @@ $exportQuery = http_build_query([
       const btnSave = document.getElementById('overrideModalSave-<?= h($timesheetDomId) ?>');
       const btnReset = document.getElementById('overrideModalReset-<?= h($timesheetDomId) ?>');
       const btnCancel = document.getElementById('overrideModalCancel-<?= h($timesheetDomId) ?>');
+      const resetOverridesModal = document.getElementById('resetOverridesModal-<?= h($timesheetDomId) ?>');
+      const resetOverridesBtn = document.getElementById('resetOverridesBtn-<?= h($timesheetDomId) ?>');
+      const resetOverridesCancel = document.getElementById('resetOverridesCancel-<?= h($timesheetDomId) ?>');
+      const resetOverridesConfirm = document.getElementById('resetOverridesConfirm-<?= h($timesheetDomId) ?>');
       const deleteWeekModal = document.getElementById('deleteWeekModal-<?= h($timesheetDomId) ?>');
       const deleteWeekBtn = document.getElementById('deleteWeekBtn-<?= h($timesheetDomId) ?>');
       const deleteWeekCancel = document.getElementById('deleteWeekCancel-<?= h($timesheetDomId) ?>');
@@ -1786,6 +1891,31 @@ $exportQuery = http_build_query([
         deleteWeekModal.setAttribute('aria-hidden', 'true');
       }
 
+      function openResetOverridesModal ()
+      {
+        if (!resetOverridesModal) return;
+        resetOverridesModal.classList.add('open');
+        resetOverridesModal.setAttribute('aria-hidden', 'false');
+        if (resetOverridesConfirm) resetOverridesConfirm.focus();
+      }
+
+      function closeResetOverridesModal ()
+      {
+        if (!resetOverridesModal) return;
+        resetOverridesModal.classList.remove('open');
+        resetOverridesModal.setAttribute('aria-hidden', 'true');
+      }
+
+      async function resetAllOverrides ()
+      {
+        try {
+          await postOverrideAction('override_reset_all', { projectNos: projectNos });
+          window.location.reload();
+        } catch (error) {
+          alert(error.message || 'Reset mislukt');
+        }
+      }
+
       async function deleteHoraeWeek ()
       {
         try {
@@ -1794,7 +1924,7 @@ $exportQuery = http_build_query([
             weekNo,
             year: yearNo
           });
-          window.location.href = 'weeks.php?projectNo[]=' + encodeURIComponent(projectNo);
+          window.location.href = 'index.php';
         } catch (error) {
           alert(error.message || 'Week verwijderen mislukt');
         }
@@ -1812,6 +1942,21 @@ $exportQuery = http_build_query([
       if (deleteWeekModal) {
         deleteWeekModal.addEventListener('click', function (event) {
           if (event.target === deleteWeekModal) closeDeleteWeekModal();
+        });
+      }
+
+      if (resetOverridesBtn) {
+        resetOverridesBtn.addEventListener('click', openResetOverridesModal);
+      }
+      if (resetOverridesCancel) {
+        resetOverridesCancel.addEventListener('click', closeResetOverridesModal);
+      }
+      if (resetOverridesConfirm) {
+        resetOverridesConfirm.addEventListener('click', resetAllOverrides);
+      }
+      if (resetOverridesModal) {
+        resetOverridesModal.addEventListener('click', function (event) {
+          if (event.target === resetOverridesModal) closeResetOverridesModal();
         });
       }
 
