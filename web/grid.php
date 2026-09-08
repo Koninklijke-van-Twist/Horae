@@ -56,7 +56,7 @@ function build_grid_from_planning_lines(array $lines, array $resourcesByNo, arra
 
         $res = $resourcesByNo[$resourceNo] ?? [];
         $emp = $employeesByNo[$resourceNo] ?? [];
-        $bsn = ''; 
+        $bsn = '';
         $name = trim((string) ($line['Description'] ?? ''));
         if ($name === '') {
             $name = (string) ($res['Name'] ?? $resourceNo);
@@ -154,7 +154,7 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
 
             $res = $resourcesByNo[$resourceNo] ?? [];
             $emp = $employeesByNo[$resourceNo] ?? [];
-            $bsn = ''; 
+            $bsn = '';
             $name = $res['Name'] ?? $resourceNo;
 
             if (!isset($dayTotals[$line['Job_No']])) {
