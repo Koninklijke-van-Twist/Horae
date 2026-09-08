@@ -2,9 +2,21 @@
   const root = document.documentElement;
   let screenshotSuspected = false;
   let manuallyHidden = false;
-  const hide = () => root.classList.add('bsn-hidden');
+  const syncButton = () => {
+    const toggle = document.getElementById('bsn-privacy-toggle');
+    if (toggle) {
+      const hidden = root.classList.contains('bsn-hidden');
+      toggle.textContent = hidden ? 'BSN tonen' : 'BSN verbergen';
+      toggle.setAttribute('aria-pressed', String(hidden));
+    }
+  };
+  const hide = () => {
+    root.classList.add('bsn-hidden');
+    syncButton();
+  };
   const update = () => {
     root.classList.toggle('bsn-hidden', manuallyHidden || screenshotSuspected || document.hidden || !document.hasFocus());
+    syncButton();
   };
   window.addEventListener('blur', hide);
   document.addEventListener('visibilitychange', update);
@@ -35,8 +47,6 @@
       manuallyHidden = !root.classList.contains('bsn-hidden');
       screenshotSuspected = false;
       update();
-      toggle.textContent = manuallyHidden ? 'BSN tonen' : 'BSN verbergen';
-      toggle.setAttribute('aria-pressed', String(manuallyHidden));
     });
     update();
   });

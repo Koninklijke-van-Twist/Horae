@@ -236,6 +236,7 @@ function overrides_reset_for_projects(array $projectNos): array
 
 function overrides_set_value(string $projectNo, int $weekNo, string $key, ?string $value, int $year = 0): array
 {
+    $key = trim($key);
     if (preg_match('/^people\..+\.(bsn|resourceNo)$/D', $key)) {
         throw new InvalidArgumentException('BSN en personeelskoppeling zijn niet bewerkbaar.');
     }

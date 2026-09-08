@@ -114,7 +114,7 @@ function bsn_enrich_report(array &$report, ?callable $lookup = null): void
     $nos = [];
     foreach ($report['gridProject']['people'] as &$person) {
         $person['bsn'] = '';
-        if (empty($person['isDeleted']) && !empty($person['resourceNo'])) {
+        if (empty($person['isDeleted']) && (string) ($person['resourceNo'] ?? '') !== '') {
             $nos[] = (string) $person['resourceNo'];
         }
     }
