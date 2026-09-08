@@ -98,10 +98,21 @@ if (count($exportTsNos) > 0) {
 $exportQuery = http_build_query($exportQueryParams);
 ?>
 <!doctype html>
-<html lang="nl">
+<html lang="nl"<?= $pdfExportMode ? '' : ' class="bsn-hidden"' ?>>
 
 <head>
   <meta charset="utf-8">
+  <?php if (!$pdfExportMode): ?>
+  <script src="assets/bsn-privacy.js" defer></script>
+  <style>
+    .bsn-hidden .bsn-value { visibility: hidden; }
+    .bsn-hidden .bsn-cell { background: #111 !important; }
+    @media print {
+      .bsn-value { visibility: hidden !important; }
+      .bsn-cell { background: #111 !important; }
+    }
+  </style>
+  <?php endif; ?>
   <title>Mandagenregister <?= h(implode(', ', $projectNosList)) ?></title>
   <style>
     @page {
@@ -1066,6 +1077,12 @@ $exportQuery = http_build_query($exportQueryParams);
   <link rel="manifest" href="site.webmanifest">
 </head>
 
+<?php if (!$pdfExportMode): ?>
+<div class="no-print">
+  <button type="button" id="bsn-privacy-toggle" aria-pressed="false">BSN verbergen</button>
+  <small>Screenshotbescherming is beperkt. Verberg BSN vóór een screenshot.</small>
+</div>
+<?php endif; ?>
 <timesheet class="tight<?= $pdfExportMode ? ' is-printing export-pdf' : ' no-print' ?>" id="<?= h($timesheetDomId) ?>" data-project-no="<?= h($projectNo) ?>" data-project-nos="<?= h(json_encode(array_values($projectNosList), JSON_UNESCAPED_UNICODE)) ?>" data-week-no="<?= h((string) $overrideWeekNo) ?>" data-year-no="<?= h((string) ($overrideYearNo > 0 ? $overrideYearNo : $reportYear)) ?>" data-horae-only="<?= $isHoraeOnly ? '1' : '0' ?>">
   <script>
     // Print autoscale: schaal naar A4-printgebied (breedte én hoogte).

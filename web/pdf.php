@@ -3,6 +3,7 @@ require_once __DIR__ . '/bsn.php';
 bsn_private_headers();
 require __DIR__ . '/auth.php';
 require __DIR__ . '/logincheck.php';
+bsn_private_headers();
 require __DIR__ . '/pdf_common.php';
 
 try {
