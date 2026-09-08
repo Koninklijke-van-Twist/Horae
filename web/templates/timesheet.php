@@ -1443,7 +1443,7 @@ $exportQuery = http_build_query($exportQueryParams);
               </button>
             <?php endif; ?>
           </td>
-          <td <?= ts_td_attrs('people.' . $personKey . '.bsn', 'BSN/Sofinummer', $bsn, $originals, $overrideSet, $rowLabel, (int) $weekVal, null, $saveYear) ?>><?= ts_render_value($bsn) ?></td>
+          <td class="bsn-cell"><span class="bsn-value"><?= ts_render_value($bsn) ?></span></td>
           <td <?= ts_td_attrs('people.' . $personKey . '.name', 'Naam en voorletters werknemer', $name, $originals, $overrideSet, $rowLabel, (int) $weekVal, 'name', $saveYear) ?>><?= ts_render_value($name) ?></td>
           <td <?= ts_td_attrs('people.' . $personKey . '.week', 'Week', (string) $weekVal, $originals, $overrideSet, $rowLabel, (int) $weekVal, 'num', $saveYear) ?>><?= $weekDisplay !== '' ? $weekDisplay : '&nbsp;' ?></td>
           <?php for ($i = 0; $i < 7; $i++): ?>

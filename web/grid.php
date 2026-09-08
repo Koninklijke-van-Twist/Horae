@@ -56,7 +56,7 @@ function build_grid_from_planning_lines(array $lines, array $resourcesByNo, arra
 
         $res = $resourcesByNo[$resourceNo] ?? [];
         $emp = $employeesByNo[$resourceNo] ?? [];
-        $bsn = $emp['Social_Security_No'] ?? ($res['Social_Security_No'] ?? 'Onbekend');
+        $bsn = ''; 
         $name = trim((string) ($line['Description'] ?? ''));
         if ($name === '') {
             $name = (string) ($res['Name'] ?? $resourceNo);
@@ -72,6 +72,7 @@ function build_grid_from_planning_lines(array $lines, array $resourcesByNo, arra
                 'startDate' => $weekStart,
                 'endDate' => $weekEnd,
                 'key' => $key,
+                'resourceNo' => $resourceNo,
                 'bsn' => $bsn,
                 'name' => $name,
                 'week' => $isoWeek,
@@ -153,7 +154,7 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
 
             $res = $resourcesByNo[$resourceNo] ?? [];
             $emp = $employeesByNo[$resourceNo] ?? [];
-            $bsn = $emp['Social_Security_No'] ?? 'Onbekend';
+            $bsn = ''; 
             $name = $res['Name'] ?? $resourceNo;
 
             if (!isset($dayTotals[$line['Job_No']])) {
@@ -184,7 +185,8 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
                     'startDate' => $timesheet['Starting_Date'] ?? null,
                     'endDate' => $timesheet['Ending_Date'] ?? null,
                     'key' => $key,
-                    'bsn' => $bsn,
+                    'resourceNo' => $resourceNo,
+                'bsn' => $bsn,
                     'name' => $name,
                     'week' => (int) substr((string) ($line['Week'] ?? ''), 4, 5),
                     'days' => array_fill(0, 7, 0.0),

@@ -3,6 +3,7 @@
 require __DIR__ . '/odata.php';
 require __DIR__ . '/grid.php';
 require __DIR__ . '/overrides.php';
+require_once __DIR__ . '/bsn.php';
 
 function h($v): string
 {
@@ -80,7 +81,8 @@ function pdf_build_people_from_project_lines(array $lines, array $resourcesByNo,
             'startDate' => null,
             'endDate' => null,
             'key' => $resourceNo . '-' . $syntheticTsNo . '-' . $projectNo,
-            'bsn' => $emp['Social_Security_No'] ?? 'Onbekend',
+            'resourceNo' => $resourceNo,
+            'bsn' => '',
             'name' => $res['Name'] ?? $resourceNo,
             'week' => $weekNo,
             'days' => array_fill(0, 7, 0.0),
@@ -113,20 +115,13 @@ function pdf_load_resources_for_lines(array $lines, string $baseApp, array $auth
         return [$resourcesByNo, $employeesByNo];
     }
 
-    $parts = array_map(fn($n) => "No eq '$n'", $neededNos);
+    $parts = array_map(fn($n) => "No eq '" . str_replace("'", "''", $n) . "'", $neededNos);
     $resFilter = rawurlencode(implode(' or ', $parts));
-    $resUrl = $baseApp . "AppResource?\$select=No,Name,LVS_No_2,Social_Security_No&\$filter={$resFilter}&\$format=json";
+    $resUrl = $baseApp . "AppResource?\$select=No,Name,LVS_No_2&\$filter={$resFilter}&\$format=json";
     $resRows = odata_get_all($resUrl, $auth);
 
     foreach ($resRows as $r) {
         $resourcesByNo[(string) $r['No']] = $r;
-    }
-
-    $empUrl = $baseApp . "Werknemer?\$select=No,Resource_No,Social_Security_No&\$filter={$resFilter}&\$format=json";
-    $empRows = odata_get_all($empUrl, $auth);
-
-    foreach ($empRows as $e) {
-        $employeesByNo[(string) ($e['Resource_No'] ?? $e['No'] ?? '')] = $e;
     }
 
     return [$resourcesByNo, $employeesByNo];

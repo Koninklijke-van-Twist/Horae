@@ -150,6 +150,8 @@ function overrides_write(array $payload): void
         $payload['createdAt'] = $payload['updatedAt'];
     }
 
+    $payload['overrides'] = array_filter($payload['overrides'] ?? [],
+        fn($key) => !preg_match('/^people\..+\.(bsn|resourceNo)$/D', (string) $key), ARRAY_FILTER_USE_KEY);
     $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     if ($json === false) {
         throw new RuntimeException('Overrides konden niet worden opgeslagen');
@@ -234,6 +236,9 @@ function overrides_reset_for_projects(array $projectNos): array
 
 function overrides_set_value(string $projectNo, int $weekNo, string $key, ?string $value, int $year = 0): array
 {
+    if (preg_match('/^people\..+\.(bsn|resourceNo)$/D', $key)) {
+        throw new InvalidArgumentException('BSN en personeelskoppeling zijn niet bewerkbaar.');
+    }
     $payload = overrides_read($projectNo, $weekNo, $year);
     if ($payload === null) {
         $payloadYear = $year > 0 ? $year : (int) date('Y');
@@ -330,6 +335,9 @@ function overrides_build_person_from_overrides(string $personKey, array $overrid
             continue;
         }
         $field = substr((string) $key, strlen($prefix));
+        if (in_array($field, ['bsn', 'resourceNo'], true)) {
+            continue;
+        }
         if ($field === '__deleted' || $field === '__added') {
             continue;
         }
@@ -494,6 +502,9 @@ function overrides_apply_to_report(array &$report, array $overrides): void
 
 function overrides_apply_key(array &$report, string $key, string $value): void
 {
+    if (preg_match('/^people\..+\.(bsn|resourceNo)$/D', $key)) {
+        return;
+    }
     if ($key === 'documentStatus') {
         $report['documentStatus'] = $value;
         return;
@@ -624,7 +635,7 @@ function overrides_collect_original_values(array $report): array
             continue;
         }
 
-        foreach (['bsn', 'name', 'week'] as $field) {
+        foreach (['name', 'week'] as $field) {
             $originals['people.' . $personKey . '.' . $field] = (string) ($person[$field] ?? '');
         }
 

@@ -11,9 +11,10 @@ function bsn_private_headers(): void
 
 function bsn_config(): array
 {
+    global $bsnGraph;
     $config = [];
     foreach (['TENANT_ID', 'CLIENT_ID', 'CLIENT_SECRET', 'SITE_ID', 'LIST_ID', 'EMPLOYEE_FIELD', 'BSN_FIELD'] as $key) {
-        $value = (string) getenv('HORAE_BSN_' . $key);
+        $value = (string) ($bsnGraph[$key] ?? '');
         if (trim($value) === '') {
             throw new RuntimeException('BSN-koppeling is niet volledig geconfigureerd.');
         }
