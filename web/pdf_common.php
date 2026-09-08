@@ -768,9 +768,20 @@ function pdf_store_export_html(string $html, string $baseUrl): string
     $path = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'horae_export_' . $token . '.html';
     $prepared = pdf_inject_base_href($html, rtrim($baseUrl, '/') . '/');
 
-    if (file_put_contents($path, $prepared) === false) {
+    $handle = @fopen($path, 'x');
+    if ($handle === false) {
         throw new RuntimeException('Export-HTML tijdelijk opslaan mislukt');
     }
+    try {
+        if (!chmod($path, 0600) || fwrite($handle, $prepared) !== strlen($prepared)) {
+            throw new RuntimeException('Export-HTML tijdelijk opslaan mislukt');
+        }
+    } catch (Throwable $e) {
+        fclose($handle);
+        @unlink($path);
+        throw $e;
+    }
+    fclose($handle);
 
     return $token;
 }

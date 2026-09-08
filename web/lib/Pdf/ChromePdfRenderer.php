@@ -47,7 +47,7 @@ class ChromePdfRenderer
         if ($pdfFile === false) {
             throw new RuntimeException('Tijdelijk PDF-bestand aanmaken mislukt');
         }
-        $pdfFile .= '.pdf';
+        // Keep tempnam's owner-only permissions; Chrome accepts extensionless output.
 
         $chrome = self::findChromium();
         if ($chrome === null) {
@@ -61,6 +61,7 @@ class ChromePdfRenderer
         $cleanupHtml = null;
         $fileFlags = '';
 
+        try {
         if (is_string($baseUrl) && $baseUrl !== '') {
             $token = pdf_store_export_html($html, $baseUrl);
             $uri = rtrim($baseUrl, '/') . '/pdf_export_view.php?token=' . rawurlencode($token);
@@ -75,7 +76,12 @@ class ChromePdfRenderer
                 @unlink($pdfFile);
                 throw new RuntimeException('Tijdelijk HTML-bestand aanmaken mislukt');
             }
+            if (!rename($htmlFile, $htmlFile . '.html')) {
+                @unlink($htmlFile);
+                throw new RuntimeException('Tijdelijk HTML-bestand voorbereiden mislukt');
+            }
             $htmlFile .= '.html';
+            $cleanupHtml = $htmlFile;
             if (file_put_contents($htmlFile, $html) === false) {
                 @unlink($htmlFile);
                 @unlink($pdfFile);
@@ -112,10 +118,18 @@ class ChromePdfRenderer
                     . 'Installeer Google Chrome (.deb) of zet HORAE_CHROMIUM_PATH.'
                 );
             }
-            throw new RuntimeException('PDF-generatie via Chromium mislukt' . ($message !== '' ? ': ' . $message : ''));
+            throw new RuntimeException('PDF-generatie via Chromium mislukt.');
         }
 
         return $pdfFile;
+        } catch (\Throwable $e) {
+            @unlink($pdfFile);
+            throw $e;
+        } finally {
+            if (is_string($cleanupHtml) && is_file($cleanupHtml)) {
+                @unlink($cleanupHtml);
+            }
+        }
     }
 
     private static function isUsableChromium(string $path): bool

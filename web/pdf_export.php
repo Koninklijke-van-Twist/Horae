@@ -45,7 +45,7 @@ try {
     if ($signedPdf === false) {
         throw new RuntimeException('Tijdelijk PDF-bestand aanmaken mislukt');
     }
-    $signedPdf .= '.pdf';
+    // Preserve the owner-only permissions of the temporary file.
 
     SignatureFieldsAppender::append($flatPdf, $signedPdf);
 
