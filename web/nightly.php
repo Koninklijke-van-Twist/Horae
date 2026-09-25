@@ -2,6 +2,7 @@
 /**
  * Nightly job: haalt AppProjecten + servicelocatie + Job Planning Lines (Resource) op en schrijft 24u-cache.
  * Wordt via GET aangeroepen door het bestaande nightly-script (geen UI).
+ * Mímir max_age op nightly-fetches: HORAE_NIGHTLY_MAX_AGE (14400).
  *
  * Voorbeeld: GET /horae/web/nightly.php
  */

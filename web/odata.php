@@ -3,9 +3,373 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
+function consolelog($text)
+{
+    static $enabled = null;
+    if ($enabled === null) {
+        $flag = getenv('KVT_DEBUG_ODATA');
+        $enabled = is_string($flag) && in_array(strtolower(trim($flag)), ['1', 'true', 'yes', 'on'], true);
+    }
+
+    if (!$enabled) {
+        return;
+    }
+
+    file_put_contents('php://stdout', $text);
+}
+
+/**
+ * Mímir-proxy: als $mimirApi in auth.php staat, gaan alle OData-fetches
+ * (via odata_get_all) naar Mímir i.p.v. BC. Lokale odata-filecache wordt overgeslagen.
+ *
+ * Met $mimirApi gezet zijn $auth_list / $environment / $auth ongebruikt voor BC-fetches;
+ * Mímir beheert environments — Horae heeft de API-key (+ optioneel $mimirBase) nodig.
+ * Houd $base met Company('…') zodat entity-URLs parseerbaar blijven (of zet een synthetic mimir.invalid-base).
+ *
+ * Tim moet in web/auth.php zetten (niet in git):
+ *   $mimirApi  = 'mimir_…';              // verplicht om Mímir te activeren
+ *   $mimirBase = 'https://sleutels.kvt.nl/mimir/api'; // optioneel
+ */
+
+function odata_mimir_api_key(): string
+{
+    global $mimirApi;
+    if (!isset($mimirApi) || !is_string($mimirApi)) {
+        return '';
+    }
+    return trim($mimirApi);
+}
+
+function odata_mimir_enabled(): bool
+{
+    return odata_mimir_api_key() !== '';
+}
+
+function odata_mimir_base_url(): string
+{
+    global $mimirBase;
+    if (isset($mimirBase) && is_string($mimirBase) && trim($mimirBase) !== '') {
+        return rtrim(trim($mimirBase), '/');
+    }
+    return 'https://sleutels.kvt.nl/mimir/api';
+}
+
+function odata_mimir_request(string $method, string $path, ?array $jsonBody = null): array
+{
+    $apiKey = odata_mimir_api_key();
+    if ($apiKey === '') {
+        throw new Exception('Mímir API-sleutel ontbreekt ($mimirApi).');
+    }
+
+    $url = odata_mimir_base_url() . '/' . ltrim($path, '/');
+    $headers = [
+        'Accept: application/json',
+        'Authorization: Bearer ' . $apiKey,
+        'X-API-Key: ' . $apiKey,
+    ];
+    $ch = curl_init($url);
+    $opts = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_CONNECTTIMEOUT => 30,
+        CURLOPT_TIMEOUT => 600,
+        CURLOPT_CUSTOMREQUEST => strtoupper($method),
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_USERAGENT => 'Horae-MimirClient/1.0',
+    ];
+    if ($jsonBody !== null) {
+        $payload = json_encode($jsonBody, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($payload === false) {
+            throw new Exception('Mímir request JSON encode mislukt.');
+        }
+        $headers[] = 'Content-Type: application/json';
+        $opts[CURLOPT_HTTPHEADER] = $headers;
+        $opts[CURLOPT_POSTFIELDS] = $payload;
+    }
+    curl_setopt_array($ch, $opts);
+    $raw = curl_exec($ch);
+    if ($raw === false) {
+        $err = curl_error($ch);
+        curl_close($ch);
+        throw new Exception('Mímir cURL error: ' . $err);
+    }
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $decoded = json_decode($raw, true);
+    if ($code < 200 || $code >= 300) {
+        $message = is_array($decoded) ? (string) ($decoded['error'] ?? $raw) : $raw;
+        throw new Exception('Mímir HTTP ' . $code . ': ' . $message);
+    }
+    if (!is_array($decoded)) {
+        throw new Exception('Mímir gaf ongeldige JSON terug.');
+    }
+    return $decoded;
+}
+
+/**
+ * @return array{company: string, entity: string, query: array<string, string>}|null
+ */
+function odata_mimir_parse_entity_url(string $url): ?array
+{
+    $parts = parse_url($url);
+    if (!is_array($parts) || !isset($parts['path'])) {
+        return null;
+    }
+    $path = (string) $parts['path'];
+    // .../ODataV4/Company('Name')/EntitySet  or urlencoded company
+    if (preg_match("#/ODataV4/Company\\((?:'([^']*)'|%27([^%]+)%27)\\)/([^/?]+)#i", $path, $match) !== 1) {
+        return null;
+    }
+    $company = rawurldecode($match[1] !== '' ? $match[1] : $match[2]);
+    $company = str_replace("''", "'", $company);
+    $entity = rawurldecode($match[3]);
+    $query = [];
+    if (isset($parts['query']) && is_string($parts['query']) && $parts['query'] !== '') {
+        parse_str($parts['query'], $parsed);
+        foreach ($parsed as $key => $value) {
+            if (is_string($key) && (is_string($value) || is_numeric($value))) {
+                $query[$key] = (string) $value;
+            }
+        }
+    }
+    return [
+        'company' => $company,
+        'entity' => $entity,
+        'query' => $query,
+    ];
+}
+
+/**
+ * @return array{environment: string}|null
+ */
+function odata_mimir_parse_companies_url(string $url): ?array
+{
+    $parts = parse_url($url);
+    if (!is_array($parts) || !isset($parts['path'])) {
+        return null;
+    }
+    $path = (string) $parts['path'];
+    // .../{environment}/ODataV4/Company or Companies
+    if (preg_match('#/([^/]+)/ODataV4/(?:Companies|Company)(?:/|\\?|$)#i', $path . (isset($parts['query']) ? '?' : ''), $match) !== 1
+        && preg_match('#/([^/]+)/ODataV4/(?:Companies|Company)$#i', $path, $match) !== 1) {
+        return null;
+    }
+    return ['environment' => rawurldecode($match[1])];
+}
+
+/**
+ * @return list<array<string, mixed>>
+ */
+function odata_mimir_companies_as_rows(?string $environment = null): array
+{
+    $response = odata_mimir_request('GET', 'companies.php');
+    $items = $response['value'] ?? null;
+    if (!is_array($items)) {
+        throw new Exception("Mímir companies-antwoord mist 'value'.");
+    }
+    $rows = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $name = trim((string) ($item['name'] ?? $item['Name'] ?? ''));
+        $env = trim((string) ($item['environment'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        if ($environment !== null && $environment !== '' && $env !== '' && strcasecmp($env, $environment) !== 0) {
+            continue;
+        }
+        $rows[] = ['Name' => $name, 'environment' => $env];
+    }
+    return $rows;
+}
+
+/**
+ * Bedrijfsnamen via Mímir companies.php (gesorteerd).
+ *
+ * @return list<string>
+ */
+function odata_mimir_list_companies(?string $environment = null): array
+{
+    $rows = odata_mimir_companies_as_rows($environment);
+    $names = [];
+    $seen = [];
+    foreach ($rows as $row) {
+        $name = trim((string) ($row['Name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $key = strtolower($name);
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $names[] = $name;
+    }
+    natcasesort($names);
+    return array_values($names);
+}
+
+/**
+ * name => environment map uit Mímir companies.php.
+ *
+ * @return array<string, string>
+ */
+function odata_mimir_company_environment_map(?string $environment = null): array
+{
+    $rows = odata_mimir_companies_as_rows($environment);
+    $map = [];
+    foreach ($rows as $row) {
+        $name = trim((string) ($row['Name'] ?? ''));
+        $env = trim((string) ($row['environment'] ?? ''));
+        if ($name === '' || $env === '') {
+            continue;
+        }
+        $map[$name] = $env;
+    }
+    ksort($map, SORT_NATURAL | SORT_FLAG_CASE);
+    return $map;
+}
+
+/**
+ * Directe company/table-query via Mímir — geen BC-URL nodig.
+ * $odataQuery gebruikt OData-keys zoals $select / $filter.
+ *
+ * @param array<string, mixed> $odataQuery
+ * @return list<array<string, mixed>>
+ */
+function odata_mimir_query(string $company, string $table, array $odataQuery, int $ttlSeconds): array
+{
+    consolelog("Mímir query company=$company table=$table\n");
+
+    $body = [
+        'company' => $company,
+        'table' => $table,
+        'max_age' => max(0, $ttlSeconds),
+        'top' => 0,
+    ];
+
+    $select = trim((string) ($odataQuery['$select'] ?? $odataQuery['select'] ?? ''));
+    if ($select !== '') {
+        $cols = [];
+        foreach (explode(',', $select) as $col) {
+            $col = trim($col);
+            if ($col !== '') {
+                $cols[] = $col;
+            }
+        }
+        if ($cols !== []) {
+            $body['select'] = $cols;
+        }
+    }
+
+    $filter = trim((string) ($odataQuery['$filter'] ?? $odataQuery['filter'] ?? ''));
+    if ($filter !== '') {
+        $body['filter'] = $filter;
+    }
+
+    $response = odata_mimir_request('POST', 'query.php', $body);
+    if (!isset($response['value']) || !is_array($response['value'])) {
+        throw new Exception("Mímir query-antwoord mist 'value'.");
+    }
+    /** @var list<array<string, mixed>> $value */
+    $value = $response['value'];
+    return $value;
+}
+
+/**
+ * @return list<array<string, mixed>>
+ */
+function odata_mimir_fetch_all(string $url, int $ttlSeconds): array
+{
+    consolelog("Mímir fetch $url\n");
+
+    $companies = odata_mimir_parse_companies_url($url);
+    if ($companies !== null) {
+        return odata_mimir_companies_as_rows($companies['environment']);
+    }
+
+    $parsed = odata_mimir_parse_entity_url($url);
+    if ($parsed === null) {
+        throw new Exception('Mímir: OData-URL kon niet worden vertaald naar company/table: ' . $url);
+    }
+
+    return odata_mimir_query($parsed['company'], $parsed['entity'], $parsed['query'], $ttlSeconds);
+}
+
+/**
+ * Load web/auth.php into $GLOBALS.
+ * Horae often requires auth inside functions; bare require would leave $mimirApi
+ * local-only and invisible to global $mimirApi in odata_mimir_api_key().
+ */
+function odata_require_auth(): void
+{
+    static $loaded = false;
+    if ($loaded) {
+        return;
+    }
+    $path = __DIR__ . '/auth.php';
+    if (!is_file($path)) {
+        throw new RuntimeException('auth.php ontbreekt.');
+    }
+    (static function (string $path): void {
+        require $path;
+        foreach (get_defined_vars() as $key => $value) {
+            if ($key === 'path') {
+                continue;
+            }
+            $GLOBALS[$key] = $value;
+        }
+    })($path);
+    $loaded = true;
+}
+
+/**
+ * Soft-fill missing BC globals when Mímir is on.
+ * Call after auth is available in $GLOBALS (via top-level require or odata_require_auth()).
+ * $base must still contain Company('…') for URL parsing — keep it or use a synthetic mimir.invalid-base.
+ */
+function odata_mimir_ensure_globals(): void
+{
+    if (!odata_mimir_enabled()) {
+        return;
+    }
+    if (!isset($GLOBALS['environment']) || !is_string($GLOBALS['environment']) || trim($GLOBALS['environment']) === '') {
+        $GLOBALS['environment'] = 'mimir';
+    }
+    if (!isset($GLOBALS['auth']) || !is_array($GLOBALS['auth'])) {
+        $GLOBALS['auth'] = [];
+    }
+    // Optional: if $base is missing but $mimirCompany is set, build a synthetic company URL.
+    $base = $GLOBALS['base'] ?? null;
+    if ((!isset($base) || !is_string($base) || trim($base) === '')) {
+        $company = $GLOBALS['mimirCompany'] ?? null;
+        if (is_string($company) && trim($company) !== '') {
+            $enc = rawurlencode(trim($company));
+            $GLOBALS['base'] = "https://mimir.invalid/mimir/ODataV4/Company('" . $enc . "')/";
+        }
+    }
+}
+
+/** Mímir max_age for nightly.php snapshot builds (4h — cache sharing, nightly still refreshes). */
+const HORAE_NIGHTLY_MAX_AGE = 14400;
+
+/** Default UI / on-demand OData TTL (seconds) when callers omit ttl — kept for non-Mímir filecache and Mímir max_age. */
+const HORAE_ODATA_TTL = 300;
+
 function odata_get_all(string $url, array $auth, $ttlSeconds = 300, int $curlTimeout = 120): array
 {
-    $ttlSeconds = max(1, (int) $ttlSeconds);
+    $ttlSeconds = max(0, (int) $ttlSeconds);
+    odata_mimir_ensure_globals();
+
+    if (odata_mimir_api_key() !== '') {
+        // Mímir beheert de BC-cache (max_age); Horae-filecache / live-paginering worden overgeslagen.
+        return odata_mimir_fetch_all($url, $ttlSeconds === 0 ? 3600 : $ttlSeconds);
+    }
+
+    $ttlSeconds = max(1, $ttlSeconds);
     maybe_cleanup_expired_cache_files();
 
     $cacheKey = build_cache_key($url, $auth);
@@ -98,7 +462,8 @@ function odata_get_json(string $url, array $auth, int $timeoutSeconds = 120): ar
 
 function build_cache_key(string $url, array $auth): string
 {
-    require __DIR__ . "/auth.php";
+    odata_require_auth();
+    $environment = $GLOBALS['environment'] ?? 'default';
     $user = (string) ($auth['user'] ?? '');
     return $url . '|' . $user . '|' . $environment;
 }
@@ -1576,8 +1941,9 @@ function projects_nightly_ttl(): int
 
 function projects_nightly_cache_path(): string
 {
-    require __DIR__ . '/auth.php';
-    // auth.php in een functie → $environment is lokaal, niet via global
+    odata_require_auth();
+    odata_mimir_ensure_globals();
+    $environment = $GLOBALS['environment'] ?? 'default';
     $env = preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) ($environment ?? 'default'));
     if ($env === '') {
         $env = 'default';
@@ -1680,7 +2046,9 @@ function planning_lines_date_range(array $lines): array
 
 function planning_lines_nightly_cache_path(): string
 {
-    require __DIR__ . '/auth.php';
+    odata_require_auth();
+    odata_mimir_ensure_globals();
+    $environment = $GLOBALS['environment'] ?? 'default';
     $env = preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) ($environment ?? 'default'));
     if ($env === '') {
         $env = 'default';
@@ -1751,7 +2119,7 @@ function planning_lines_nightly_fetch(string $base, array $auth, array $jobNos =
         if (is_file($hashPath)) {
             @unlink($hashPath);
         }
-        $appendRows(odata_get_all($sourceUrl, $auth, 1, 180));
+        $appendRows(odata_get_all($sourceUrl, $auth, HORAE_NIGHTLY_MAX_AGE, 180));
         return $byJob;
     }
 
@@ -1775,7 +2143,7 @@ function planning_lines_nightly_fetch(string $base, array $auth, array $jobNos =
             @unlink($hashPath);
         }
         try {
-            $appendRows(odata_get_all($url, $auth, 1, 180));
+            $appendRows(odata_get_all($url, $auth, HORAE_NIGHTLY_MAX_AGE, 180));
         } catch (Throwable $e) {
             // Batch overslaan i.p.v. hele nightly laten crashen
             continue;
@@ -1865,7 +2233,8 @@ function planning_lines_for_project(string $projectNo, string $base = '', array 
 }
 
 /**
- * Haalt AppProjecten + servicelocatie + Job Planning Lines (Resource) op en schrijft de nightly-cache (24u).
+ * Haalt AppProjecten + servicelocatie + Job Planning Lines (Resource) op en schrijft de nightly-cache (24u lokale snapshot).
+ * Mímir max_age op deze fetches: HORAE_NIGHTLY_MAX_AGE (14400).
  * @return array{ok:bool,count:int,planningLines:int,path:string,cached_at:int,expires_at:int,source_url:string}
  */
 function projects_nightly_refresh(string $base, array $auth): array
@@ -1879,7 +2248,7 @@ function projects_nightly_refresh(string $base, array $auth): array
     if (is_file($hashPath)) {
         @unlink($hashPath);
     }
-    $projects = odata_get_all($sourceUrl, $auth, 1, 180);
+    $projects = odata_get_all($sourceUrl, $auth, HORAE_NIGHTLY_MAX_AGE, 180);
 
     $entityUrl = $base . "LVS_MainEntityCard?\$select=No,Description,KVT_Customer_Description,KVT_Address,KVT_Address_2,KVT_Post_Code,KVT_City&\$format=json";
     $entityHash = cache_path_for_key(build_cache_key($entityUrl, $auth));
@@ -1888,7 +2257,7 @@ function projects_nightly_refresh(string $base, array $auth): array
     }
     $entities = [];
     try {
-        foreach (odata_get_all($entityUrl, $auth, 1, 180) as $entity) {
+        foreach (odata_get_all($entityUrl, $auth, HORAE_NIGHTLY_MAX_AGE, 180) as $entity) {
             $no = trim((string) ($entity['No'] ?? ''));
             if ($no !== '') {
                 $entities[$no] = $entity;
@@ -1905,7 +2274,7 @@ function projects_nightly_refresh(string $base, array $auth): array
     }
     $jobs = [];
     try {
-        foreach (odata_get_all($jobUrl, $auth, 1, 180) as $job) {
+        foreach (odata_get_all($jobUrl, $auth, HORAE_NIGHTLY_MAX_AGE, 180) as $job) {
             $no = trim((string) ($job['No'] ?? ''));
             if ($no !== '') {
                 $jobs[$no] = $job;
@@ -2085,7 +2454,10 @@ function projects_filter_cached_rows(array $rows, string $query, int $limit = 20
 
 function odata_send_projects_batch_json(): void
 {
-    require __DIR__ . '/auth.php';
+    odata_require_auth();
+    odata_mimir_ensure_globals();
+    $base = $GLOBALS['base'] ?? '';
+    $auth = $GLOBALS['auth'] ?? [];
 
     if (function_exists('xdebug_disable')) {
         xdebug_disable();
@@ -2100,7 +2472,6 @@ function odata_send_projects_batch_json(): void
     $top = max(1, min(2000, (int) ($_GET['top'] ?? 500)));
 
     try {
-        // auth.php is hierboven ge-require'd → $base/$auth zijn lokaal beschikbaar
         $nightly = projects_nightly_read(true);
 
         if (!$nightly['valid'] || count($nightly['rows']) === 0) {
@@ -2141,7 +2512,10 @@ function odata_send_projects_batch_json(): void
 
 function odata_send_projects_search_json(): void
 {
-    require __DIR__ . '/auth.php';
+    odata_require_auth();
+    odata_mimir_ensure_globals();
+    $base = $GLOBALS['base'] ?? '';
+    $auth = $GLOBALS['auth'] ?? [];
 
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
