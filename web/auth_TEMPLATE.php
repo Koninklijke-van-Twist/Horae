@@ -2,17 +2,21 @@
 /**
  * Auth template for Horae.
  *
- * Prefer Mímir (no BC credentials needed for OData fetches):
+ * Prefer Mímir, and keep the BC block as automatic fallback when Mímir is down:
  *   $mimirApi  = 'mimir_…';  // required to activate Mímir
  *   $mimirBase = 'https://sleutels.kvt.nl/mimir/api'; // optional
  *
- * With $mimirApi set, $auth_list / $auth are unused for Business Central fetches.
+ * With $mimirApi set, fetches try Mímir first and fall back to the BC vars below
+ * ($auth_list / $environment / $auth / $base). Those credentials must stay in
+ * this file next to $mimirApi. If they are absent, the original Mímir error is raised.
  * Keep $base with Company('…') so entity URLs stay parseable (or set $mimirCompany
- * and omit $base — odata_mimir_ensure_globals builds a synthetic mimir.invalid URL).
+ * and omit $base — odata_mimir_ensure_globals builds a synthetic mimir.invalid URL;
+ * fallback still needs a real $base).
  *
- * Without $mimirApi, keep the BC block for the legacy OData path.
+ * Without $mimirApi, only the BC block is used.
  *
- * Tim must set $mimirApi (and optional $mimirBase) in auth.php locally / on server.
+ * Tim must set $mimirApi (and optional $mimirBase) in auth.php locally / on server,
+ * and leave the BC credentials in place for the direct fallback.
  * Never commit web/auth.php.
  */
 
@@ -21,7 +25,7 @@
 // $mimirBase = 'https://sleutels.kvt.nl/mimir/api';
 // $mimirCompany = 'Koninklijke van Twist'; // optional if $base is omitted
 
-// --- Legacy Business Central (only when $mimirApi is not set) ---
+// --- Business Central (direct path, and fallback when Mímir fails) ---
 $auth_list =
 [
     "ENV_1" => ['mode' => 'basic', 'user' => 'USERNAME', 'pass' => 'PASSWORD'],
