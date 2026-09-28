@@ -670,13 +670,31 @@ function odata_bc_direct_company_environment_map(): array
     }
 
     $map = [];
-    foreach (odata_direct_companies_as_rows(null) as $row) {
-        $name = trim((string) ($row['Name'] ?? ''));
-        $env = trim((string) ($row['environment'] ?? ''));
-        if ($name === '' || $env === '' || strcasecmp($env, 'mimir') === 0) {
+    $configured = odata_bc_configured_environments();
+    $envs = $configured;
+    $allowPrimaryAuth = false;
+    if ($envs === []) {
+        $primary = odata_bc_environment();
+        if ($primary !== null && $primary !== '') {
+            $envs = [$primary];
+        }
+        $allowPrimaryAuth = true;
+    }
+    foreach ($envs as $envName) {
+        try {
+            $rows = odata_direct_companies_for_environment($envName, $allowPrimaryAuth);
+        } catch (Throwable $exception) {
+            error_log('[Horae] companylijst voor environment ' . $envName . ' mislukt');
             continue;
         }
-        $map[$name] = $env;
+        foreach ($rows as $row) {
+            $name = trim((string) ($row['Name'] ?? ''));
+            $env = trim((string) ($row['environment'] ?? ''));
+            if ($name === '' || $env === '' || strcasecmp($env, 'mimir') === 0) {
+                continue;
+            }
+            $map[$name] = $env;
+        }
     }
     $cachedKey = $key;
     $cachedMap = $map;

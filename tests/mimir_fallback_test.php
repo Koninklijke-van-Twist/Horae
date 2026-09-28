@@ -17,7 +17,11 @@ $auth = ['mode' => 'basic', 'user' => 'bcuser', 'pass' => 'bc-secret'];
 $auth_list = ['Production' => $auth];
 
 $calls = [];
-$GLOBALS['HORAE_ODATA_BC_FETCH'] = static function (string $url, array $auth, int $ttl, int $curlTimeout = 120) use (&$calls): array {
+$throwBrokenEnv = false;
+$GLOBALS['HORAE_ODATA_BC_FETCH'] = static function (string $url, array $auth, int $ttl, int $curlTimeout = 120) use (&$calls, &$throwBrokenEnv): array {
+    if ($throwBrokenEnv && preg_match('#/Broken/ODataV4/#', $url) === 1) {
+        throw new Exception('Broken environment down bc-secret should-not-leak');
+    }
     $calls[] = [
         'url' => $url,
         'user' => (string) ($auth['user'] ?? ''),
@@ -299,6 +303,20 @@ if ($encodedUrl !== 'https://bc.example:7148/Sand%20Box/ODataV4/Company(\'X\')/T
     fail('env-segment mag maar één keer geëncodeerd worden: ' . $encodedUrl);
 }
 
+$throwBrokenEnv = true;
+$auth_list['Broken'] = ['mode' => 'basic', 'user' => 'broken-user', 'pass' => 'broken-secret'];
+$brokenLogsBefore = substr_count(fallback_log(), '[Horae] companylijst voor environment Broken mislukt');
+$brokenLookup = odata_bc_url_from_odata_url("https://mimir.invalid/mimir/ODataV4/Company('Tweede%20BV')/AppResource?\$select=No");
+if (strpos($brokenLookup, "https://bc.example:7148/Sandbox/ODataV4/Company('Tweede%20BV')/AppResource?") !== 0) {
+    fail('een falende environment mag de company-map van gezonde environments niet wissen: ' . $brokenLookup);
+}
+if (substr_count(fallback_log(), '[Horae] companylijst voor environment Broken mislukt') !== $brokenLogsBefore + 1) {
+    fail('een falende environment moet geïsoleerd gelogd worden, log=' . fallback_log());
+}
+if (strpos(fallback_log(), 'should-not-leak') !== false || strpos(fallback_log(), 'broken-secret') !== false) {
+    fail('environment-foutlog bevat een geheim');
+}
+
 $environment = 'mimir';
 $cacheKey = build_cache_key("https://bc.example:7148/Sandbox/ODataV4/Company('Tweede%20BV')/AppResource", $authSandbox);
 if (substr($cacheKey, -strlen('|sandbox-user|Sandbox')) !== '|sandbox-user|Sandbox') {
@@ -310,12 +328,15 @@ if (strpos($cacheKey, '|mimir') !== false) {
 $environment = 'Production';
 
 $authPath = dirname(__DIR__) . '/web/auth.php';
-register_shutdown_function(static function () use ($authPath): void {
-    if (is_file($authPath)) {
-        @unlink($authPath);
-    }
-});
-file_put_contents($authPath, <<<'PHP'
+if (is_file($authPath)) {
+    // Bestaande credentials blijven onaangeroerd.
+} else {
+    register_shutdown_function(static function () use ($authPath): void {
+        if (is_file($authPath)) {
+            @unlink($authPath);
+        }
+    });
+    file_put_contents($authPath, <<<'PHP'
 <?php
 function horae_test_auth_include_marker(): int
 {
@@ -329,31 +350,32 @@ $auth_list = [
     'Sandbox' => ['mode' => 'basic', 'user' => 'file-user', 'pass' => 'file-secret'],
 ];
 PHP);
-$environment = 'KeepMe';
-$auth = ['mode' => 'basic', 'user' => 'preset-user', 'pass' => 'preset-secret'];
-unset($auth_list);
-unset($base);
-unset($GLOBALS['baseUrl']);
-odata_ensure_bc_auth_loaded();
-odata_ensure_bc_auth_loaded();
-if ($environment !== 'KeepMe' || ($auth['user'] ?? '') !== 'preset-user') {
-    fail('gezette BC-globals werden overschreven: env=' . $environment . ' user=' . (string) ($auth['user'] ?? ''));
+    $environment = 'KeepMe';
+    $auth = ['mode' => 'basic', 'user' => 'preset-user', 'pass' => 'preset-secret'];
+    unset($auth_list);
+    unset($base);
+    unset($GLOBALS['baseUrl']);
+    odata_ensure_bc_auth_loaded();
+    odata_ensure_bc_auth_loaded();
+    if ($environment !== 'KeepMe' || ($auth['user'] ?? '') !== 'preset-user') {
+        fail('gezette BC-globals werden overschreven: env=' . $environment . ' user=' . (string) ($auth['user'] ?? ''));
+    }
+    if (($GLOBALS['baseUrl'] ?? '') !== 'https://from-file.example:7148/') {
+        fail('baseUrl werd niet naar $GLOBALS gekopieerd: ' . json_encode($GLOBALS['baseUrl'] ?? null));
+    }
+    if (($GLOBALS['base'] ?? '') !== "https://from-file.example:7148/Sandbox/ODataV4/Company('X')/") {
+        fail('base werd niet naar $GLOBALS gekopieerd: ' . json_encode($GLOBALS['base'] ?? null));
+    }
+    if (($GLOBALS['auth_list']['Sandbox']['user'] ?? '') !== 'file-user') {
+        fail('auth_list werd niet naar $GLOBALS gekopieerd: ' . json_encode($GLOBALS['auth_list'] ?? null));
+    }
+    if (horae_test_auth_include_marker() !== 1) {
+        fail('auth.php werd niet geladen');
+    }
+    if (strpos(fallback_log(), 'file-secret') !== false || strpos(fallback_log(), 'sandbox-secret') !== false || strpos(fallback_log(), 'bc-secret') !== false || strpos(fallback_log(), 'mimir_test_key_should_not_leak') !== false) {
+        fail('log bevat een geheim');
+    }
+    @unlink($authPath);
 }
-if (($GLOBALS['baseUrl'] ?? '') !== 'https://from-file.example:7148/') {
-    fail('baseUrl werd niet naar $GLOBALS gekopieerd: ' . json_encode($GLOBALS['baseUrl'] ?? null));
-}
-if (($GLOBALS['base'] ?? '') !== "https://from-file.example:7148/Sandbox/ODataV4/Company('X')/") {
-    fail('base werd niet naar $GLOBALS gekopieerd: ' . json_encode($GLOBALS['base'] ?? null));
-}
-if (($GLOBALS['auth_list']['Sandbox']['user'] ?? '') !== 'file-user') {
-    fail('auth_list werd niet naar $GLOBALS gekopieerd: ' . json_encode($GLOBALS['auth_list'] ?? null));
-}
-if (horae_test_auth_include_marker() !== 1) {
-    fail('auth.php werd niet geladen');
-}
-if (strpos(fallback_log(), 'file-secret') !== false || strpos(fallback_log(), 'sandbox-secret') !== false || strpos(fallback_log(), 'bc-secret') !== false || strpos(fallback_log(), 'mimir_test_key_should_not_leak') !== false) {
-    fail('log bevat een geheim');
-}
-@unlink($authPath);
 
 echo "OK\n";
