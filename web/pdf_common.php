@@ -801,13 +801,17 @@ function pdf_load_reports(string $baseApp, array $auth, array $query): array
         }
     }
 
-    $listedOverrides = overrides_list_for_projects($projectNos);
+    $querySelectedTs = count($tsNos) > 0;
+    $listedOverrides = [];
     $projectsWithSynthetic = [];
     foreach ($syntheticRequests as $req) {
         $projectsWithSynthetic[(string) ($req['projectNo'] ?? '')] = true;
     }
-    foreach ($listedOverrides as $item) {
-        $projectsWithSynthetic[(string) ($item['projectNo'] ?? '')] = true;
+    if (!$querySelectedTs) {
+        $listedOverrides = overrides_list_for_projects($projectNos);
+        foreach ($listedOverrides as $item) {
+            $projectsWithSynthetic[(string) ($item['projectNo'] ?? '')] = true;
+        }
     }
 
     $partialReports = [];
@@ -831,22 +835,24 @@ function pdf_load_reports(string $baseApp, array $auth, array $query): array
         $partialReports[] = pdf_build_synthetic_report($projectNo, $weekNo, $year, $projectNos, $baseApp, $auth);
     }
 
-    $bcSlots = [];
-    foreach ($partialReports as $partial) {
-        foreach (pdf_collect_report_week_slots($partial) as $slot) {
-            $bcSlots[] = $slot;
+    if (!$querySelectedTs) {
+        $bcSlots = [];
+        foreach ($partialReports as $partial) {
+            foreach (pdf_collect_report_week_slots($partial) as $slot) {
+                $bcSlots[] = $slot;
+            }
         }
-    }
-    foreach (pdf_extra_override_week_requests($projectNos, $syntheticRequests, $listedOverrides, $bcSlots) as $req) {
-        $projectNo = $req['projectNo'];
-        $weekNo = $req['weekNo'];
-        $year = (int) $req['year'];
-        $tsNo = $req['tsNo'];
-        if ($tsNo !== '' && !in_array($tsNo, $tsNos, true)) {
-            $tsNos[] = $tsNo;
+        foreach (pdf_extra_override_week_requests($projectNos, $syntheticRequests, $listedOverrides, $bcSlots) as $req) {
+            $projectNo = $req['projectNo'];
+            $weekNo = $req['weekNo'];
+            $year = (int) $req['year'];
+            $tsNo = $req['tsNo'];
+            if ($tsNo !== '' && !in_array($tsNo, $tsNos, true)) {
+                $tsNos[] = $tsNo;
+            }
+            $syntheticRequests[] = $req;
+            $partialReports[] = pdf_build_synthetic_report($projectNo, $weekNo, $year, $projectNos, $baseApp, $auth);
         }
-        $syntheticRequests[] = $req;
-        $partialReports[] = pdf_build_synthetic_report($projectNo, $weekNo, $year, $projectNos, $baseApp, $auth);
     }
 
     if (count($partialReports) === 0) {
