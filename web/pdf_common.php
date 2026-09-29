@@ -416,6 +416,134 @@ function pdf_resolve_export_ts_no(array $report, array $tsNos): string
     return '';
 }
 
+/**
+ * @return list<array{projectNo:string,year:int,week:int}>
+ */
+function pdf_collect_report_week_slots(array $report): array
+{
+    $projectNo = (string) ($report['projectNo'] ?? '');
+    $year = (int) ($report['year'] ?? 0);
+    $slots = [];
+    $weekNo = (int) ($report['weekNo'] ?? 0);
+    if ($weekNo >= 1 && $weekNo <= 53 && $projectNo !== '') {
+        $slots[] = ['projectNo' => $projectNo, 'year' => $year, 'week' => $weekNo];
+    }
+    foreach ($report['gridProject']['people'] ?? [] as $person) {
+        if (!is_array($person)) {
+            continue;
+        }
+        $personWeek = (int) ($person['week'] ?? 0);
+        $personYear = (int) ($person['sortYear'] ?? $year);
+        $personProject = trim((string) ($person['project'] ?? $projectNo));
+        if ($personWeek < 1 || $personWeek > 53 || $personProject === '') {
+            continue;
+        }
+        $slots[] = ['projectNo' => $personProject, 'year' => $personYear, 'week' => $personWeek];
+    }
+    return $slots;
+}
+
+/**
+ * Override-only weken die nog niet via tsNo of een BC-week in het rapport zitten.
+ *
+ * @param list<string> $projectNos
+ * @param list<array<string,mixed>> $alreadyRequests
+ * @param list<array<string,mixed>> $listed
+ * @param list<array<string,mixed>> $bcSlots
+ * @return list<array{projectNo:string,weekNo:int,year:int,tsNo:string}>
+ */
+function pdf_extra_override_week_requests(array $projectNos, array $alreadyRequests, array $listed, array $bcSlots): array
+{
+    $allowed = [];
+    foreach ($projectNos as $projectNo) {
+        $projectNo = trim((string) $projectNo);
+        if ($projectNo !== '') {
+            $allowed[$projectNo] = true;
+        }
+    }
+
+    $occupied = [];
+    $mark = static function (string $projectNo, int $year, int $week) use (&$occupied): void {
+        if ($projectNo === '' || $week < 1 || $week > 53) {
+            return;
+        }
+        $occupied[$projectNo . '|' . $year . '|' . $week] = true;
+    };
+    $covers = static function (string $projectNo, int $year, int $week) use (&$occupied): bool {
+        if (isset($occupied[$projectNo . '|' . $year . '|' . $week])) {
+            return true;
+        }
+        if ($year === 0 && isset($occupied[$projectNo . '|0|' . $week])) {
+            return true;
+        }
+        if ($year === 0) {
+            $prefix = $projectNo . '|';
+            $suffix = '|' . $week;
+            foreach (array_keys($occupied) as $key) {
+                if (strncmp($key, $prefix, strlen($prefix)) !== 0 || substr($key, -strlen($suffix)) !== $suffix) {
+                    continue;
+                }
+                $mid = substr($key, strlen($prefix), -strlen($suffix));
+                if ($mid !== '' && ctype_digit($mid)) {
+                    return true;
+                }
+            }
+        }
+        return $year > 0 && isset($occupied[$projectNo . '|0|' . $week]);
+    };
+
+    foreach ([$alreadyRequests, $bcSlots] as $groups) {
+        foreach ($groups as $slot) {
+            if (!is_array($slot)) {
+                continue;
+            }
+            $mark(
+                (string) ($slot['projectNo'] ?? ''),
+                (int) ($slot['year'] ?? 0),
+                (int) ($slot['weekNo'] ?? $slot['week'] ?? 0)
+            );
+        }
+    }
+
+    $extra = [];
+    $seenTs = [];
+    foreach ($listed as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $projectNo = trim((string) ($item['projectNo'] ?? ''));
+        $weekNo = (int) ($item['week'] ?? $item['weekNo'] ?? 0);
+        $year = (int) ($item['year'] ?? 0);
+        if ($projectNo === '' || !isset($allowed[$projectNo]) || $weekNo < 1 || $weekNo > 53) {
+            continue;
+        }
+        if ($covers($projectNo, $year, $weekNo)) {
+            continue;
+        }
+        try {
+            $tsNo = (string) ($item['tsNo'] ?? '');
+            if ($tsNo === '') {
+                $tsNo = overrides_synthetic_ts_no($projectNo, $weekNo, $year);
+            }
+        } catch (Throwable $e) {
+            continue;
+        }
+        if ($tsNo === '' || isset($seenTs[$tsNo])) {
+            continue;
+        }
+        $seenTs[$tsNo] = true;
+        $mark($projectNo, $year, $weekNo);
+        $extra[] = [
+            'projectNo' => $projectNo,
+            'weekNo' => $weekNo,
+            'year' => $year,
+            'tsNo' => $tsNo,
+        ];
+    }
+
+    return $extra;
+}
+
 function pdf_finalize_report(array &$report, string $reportKey, array $tsNos): void
 {
     $weekNo = (int) ($report['weekNo'] ?? 0);
@@ -439,6 +567,16 @@ function pdf_finalize_report(array &$report, string $reportKey, array $tsNos): v
         $personYear = (int) ($person['sortYear'] ?? $reportYear);
         if ($personWeek > 0) {
             $weekSlots[$personYear . '|' . $personWeek] = ['year' => $personYear, 'week' => $personWeek];
+        }
+    }
+    foreach ($report['overrideWeekSlots'] ?? [] as $slot) {
+        if (!is_array($slot)) {
+            continue;
+        }
+        $slotWeek = (int) ($slot['week'] ?? 0);
+        $slotYear = (int) ($slot['year'] ?? $reportYear);
+        if ($slotWeek > 0) {
+            $weekSlots[$slotYear . '|' . $slotWeek] = ['year' => $slotYear, 'week' => $slotWeek];
         }
     }
 
@@ -483,6 +621,7 @@ function pdf_merge_reports(array $reports, array $projectNos): array
     $weekNo = 0;
     $year = 0;
     $isHoraeOnly = true;
+    $sawWeekContent = false;
     $contractorMaps = [];
     $serviceMaps = [];
     $displayMaps = [];
@@ -502,8 +641,14 @@ function pdf_merge_reports(array $reports, array $projectNos): array
         if ($year === 0) {
             $year = (int) ($report['year'] ?? 0);
         }
-        if (empty($report['isHoraeOnly'])) {
-            $isHoraeOnly = false;
+        $shellOnly = ((int) ($report['weekNo'] ?? 0) < 1) && count($report['gridProject']['people'] ?? []) === 0;
+        if (!$shellOnly) {
+            // Een leeg planningsrapport (geen Job Planning Lines) is geen BC-week
+            // en mag een Horae-only week niet verbergen.
+            $sawWeekContent = true;
+            if (empty($report['isHoraeOnly'])) {
+                $isHoraeOnly = false;
+            }
         }
         $contractorMaps[] = $report['contractor'] ?? [];
         $serviceMaps[] = $report['serviceLocation'] ?? [];
@@ -566,6 +711,17 @@ function pdf_merge_reports(array $reports, array $projectNos): array
     }
 
     $primaryNo = (string) ($projectNos[0] ?? $primary['projectNo'] ?? '');
+    if (!$sawWeekContent) {
+        $isHoraeOnly = false;
+    }
+
+    $overrideWeekSlots = [];
+    foreach ($reports as $report) {
+        foreach (pdf_collect_report_week_slots($report) as $slot) {
+            $slotKey = $slot['projectNo'] . '|' . $slot['year'] . '|' . $slot['week'];
+            $overrideWeekSlots[$slotKey] = $slot;
+        }
+    }
 
     return [
         'projectNo' => $primaryNo,
@@ -600,6 +756,7 @@ function pdf_merge_reports(array $reports, array $projectNos): array
             'onderaannemer' => '',
             'uitvoerder' => '',
         ],
+        'overrideWeekSlots' => array_values($overrideWeekSlots),
     ];
 }
 
@@ -641,6 +798,25 @@ function pdf_load_reports(string $baseApp, array $auth, array $query): array
         if (!in_array($projectNo, $projectNos, true)) {
             $projectNos[] = $projectNo;
         }
+        $partialReports[] = pdf_build_synthetic_report($projectNo, $weekNo, $year, $projectNos, $baseApp, $auth);
+    }
+
+    $bcSlots = [];
+    foreach ($partialReports as $partial) {
+        foreach (pdf_collect_report_week_slots($partial) as $slot) {
+            $bcSlots[] = $slot;
+        }
+    }
+    $listedOverrides = overrides_list_for_projects($projectNos);
+    foreach (pdf_extra_override_week_requests($projectNos, $syntheticRequests, $listedOverrides, $bcSlots) as $req) {
+        $projectNo = $req['projectNo'];
+        $weekNo = $req['weekNo'];
+        $year = (int) $req['year'];
+        $tsNo = $req['tsNo'];
+        if ($tsNo !== '' && !in_array($tsNo, $tsNos, true)) {
+            $tsNos[] = $tsNo;
+        }
+        $syntheticRequests[] = $req;
         $partialReports[] = pdf_build_synthetic_report($projectNo, $weekNo, $year, $projectNos, $baseApp, $auth);
     }
 

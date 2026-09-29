@@ -18,7 +18,8 @@ $auth_list = ['Production' => $auth];
 
 $calls = [];
 $throwBrokenEnv = false;
-$GLOBALS['HORAE_ODATA_BC_FETCH'] = static function (string $url, array $auth, int $ttl, int $curlTimeout = 120) use (&$calls, &$throwBrokenEnv): array {
+$duplicateKvtInSandbox = false;
+$GLOBALS['HORAE_ODATA_BC_FETCH'] = static function (string $url, array $auth, int $ttl, int $curlTimeout = 120) use (&$calls, &$throwBrokenEnv, &$duplicateKvtInSandbox): array {
     if ($throwBrokenEnv && preg_match('#/Broken/ODataV4/#', $url) === 1) {
         throw new Exception('Broken environment down bc-secret should-not-leak');
     }
@@ -30,9 +31,13 @@ $GLOBALS['HORAE_ODATA_BC_FETCH'] = static function (string $url, array $auth, in
     ];
     if (preg_match('#/([^/]+)/ODataV4/Company(?:\\?|$)#', $url, $envMatch) === 1) {
         if (strcasecmp($envMatch[1], 'Sandbox') === 0) {
-            return [
+            $rows = [
                 ['Name' => 'Tweede BV'],
             ];
+            if ($duplicateKvtInSandbox) {
+                $rows[] = ['Name' => "KVT\xC2\xA0Gas"];
+            }
+            return $rows;
         }
         return [
             ['Name' => 'KVT Gas'],
@@ -298,6 +303,41 @@ $unknownUrl = odata_bc_url_from_odata_url("https://mimir.invalid/mimir/ODataV4/C
 if (strpos($unknownUrl, 'https://bc.example:7148/Production/ODataV4/Company(') !== 0) {
     fail('onbekend bedrijf moet op de primaire environment terugvallen: ' . $unknownUrl);
 }
+$encodedCompanyUrl = odata_bc_url_from_odata_url("https://mimir.invalid/mimir/ODataV4/Company(%27Tweede%20BV%27)/AppResource?\$select=No");
+if (strpos($encodedCompanyUrl, "https://bc.example:7148/Sandbox/ODataV4/Company(%27Tweede%20BV%27)/AppResource?") !== 0) {
+    fail('procent-gecodeerde company moet Sandbox kiezen: ' . $encodedCompanyUrl);
+}
+$apostropheCompany = odata_company_from_odata_path("/mimir/ODataV4/Company('Van%20''t%20Hof')/AppResource");
+if ($apostropheCompany !== "Van 't Hof") {
+    fail('company met apostrof werd afgekapt: ' . json_encode($apostropheCompany));
+}
+$parsedEncoded = odata_mimir_parse_entity_url("https://mimir.invalid/mimir/ODataV4/Company(%27Tweede%20BV%27)/AppResource?\$select=No");
+if (($parsedEncoded['company'] ?? '') !== 'Tweede BV' || ($parsedEncoded['entity'] ?? '') !== 'AppResource') {
+    fail('entity-parser faalt op %27-company: ' . json_encode($parsedEncoded));
+}
+if (odata_bc_environment_for_company("KVT\xC2\xA0Gas") !== 'Production') {
+    fail('nbsp in de bedrijfsnaam moet dezelfde environment opleveren');
+}
+$authListBeforeCase = $auth_list;
+$auth_list = [
+    'sandbox' => $authSandbox,
+    'Production' => $auth,
+];
+$caseAuth = odata_bc_auth_for_environment('Sandbox', []);
+if (($caseAuth['user'] ?? '') !== 'sandbox-user') {
+    fail('auth_list-sleutel moet hoofdletterongevoelig matchen: ' . json_encode($caseAuth));
+}
+$auth_list = $authListBeforeCase;
+$duplicateKvtInSandbox = true;
+odata_bc_company_map_reset();
+if (odata_bc_environment_for_company('KVT Gas') !== 'Production' || odata_bc_environment_for_company("KVT\xC2\xA0Gas") !== 'Production') {
+    fail('dubbele bedrijfsnaam moet de primaire environment houden');
+}
+if (odata_bc_environment_for_company('Tweede BV') !== 'Sandbox') {
+    fail('uniek Sandbox-bedrijf mag niet naar Production');
+}
+$duplicateKvtInSandbox = false;
+odata_bc_company_map_reset();
 $encodedUrl = odata_bc_url_from_odata_url("https://mimir.invalid/Sand%20Box/ODataV4/Company('X')/T");
 if ($encodedUrl !== 'https://bc.example:7148/Sand%20Box/ODataV4/Company(\'X\')/T') {
     fail('env-segment mag maar één keer geëncodeerd worden: ' . $encodedUrl);
@@ -315,6 +355,28 @@ if (substr_count(fallback_log(), '[Horae] companylijst voor environment Broken m
 }
 if (strpos(fallback_log(), 'should-not-leak') !== false || strpos(fallback_log(), 'broken-secret') !== false) {
     fail('environment-foutlog bevat een geheim');
+}
+$callsBeforeLeak = count($calls);
+$leakedUrl = odata_bc_url_from_odata_url("https://mimir.invalid/mimir/ODataV4/Company('Onbekend%20BV')/AppResource");
+if (!odata_bc_url_is_synthetic($leakedUrl)) {
+    fail('onbekend bedrijf bij een onvolledige company-map mag niet herschreven worden: ' . $leakedUrl);
+}
+try {
+    odata_get_all(
+        "https://mimir.invalid/mimir/ODataV4/Company('Onbekend%20BV')/AppResource?\$select=No",
+        $passedPrimary,
+        12
+    );
+    fail('onbekend bedrijf bij een onvolledige map moet de Mímir-fout teruggeven');
+} catch (Throwable $exception) {
+    if (strpos($exception->getMessage(), 'Mímir') === false) {
+        fail('onvolledige map gaf niet de Mímir-fout: ' . $exception->getMessage());
+    }
+}
+foreach (array_slice($calls, $callsBeforeLeak) as $leakCall) {
+    if (stripos($leakCall['url'], 'mimir.invalid') !== false || stripos($leakCall['url'], 'Onbekend') !== false) {
+        fail('live BC-call lekte mimir.invalid of het onbekende bedrijf: ' . json_encode($leakCall));
+    }
 }
 
 $environment = 'mimir';
