@@ -43,6 +43,47 @@ function overrides_sanitize_year(int $year): int
     return $year;
 }
 
+function overrides_parse_date(string $value): ?DateTimeImmutable
+{
+    $value = trim($value);
+    if ($value === '' || strcasecmp($value, 'onbekend') === 0) {
+        return null;
+    }
+    foreach (['Y-m-d', 'd-m-Y', 'j-n-Y', 'd/m/Y', 'j/n/Y', 'd.m.Y', 'j.n.Y'] as $format) {
+        $dt = DateTimeImmutable::createFromFormat('!' . $format, $value);
+        if (!$dt instanceof DateTimeImmutable) {
+            continue;
+        }
+        $errors = DateTimeImmutable::getLastErrors();
+        if (is_array($errors) && (($errors['warning_count'] ?? 0) > 0 || ($errors['error_count'] ?? 0) > 0)) {
+            continue;
+        }
+        return $dt;
+    }
+    return null;
+}
+
+/**
+ * @return array{year:int,weekNo:int,ymd:string}|null
+ */
+function overrides_iso_week_from_date(string $value): ?array
+{
+    $dt = overrides_parse_date($value);
+    if ($dt === null) {
+        return null;
+    }
+    $weekNo = (int) $dt->format('W');
+    $year = (int) $dt->format('o');
+    if ($weekNo < 1 || $weekNo > 53 || $year < 2000 || $year > 2100) {
+        return null;
+    }
+    return [
+        'year' => $year,
+        'weekNo' => $weekNo,
+        'ymd' => $dt->format('Y-m-d'),
+    ];
+}
+
 function overrides_file_path(string $projectNo, int $weekNo, int $year = 0): string
 {
     $projectNo = overrides_sanitize_project_no($projectNo);

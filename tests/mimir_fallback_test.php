@@ -18,7 +18,8 @@ $auth_list = ['Production' => $auth];
 
 $calls = [];
 $throwBrokenEnv = false;
-$GLOBALS['HORAE_ODATA_BC_FETCH'] = static function (string $url, array $auth, int $ttl, int $curlTimeout = 120) use (&$calls, &$throwBrokenEnv): array {
+$duplicateKvtInSandbox = false;
+$GLOBALS['HORAE_ODATA_BC_FETCH'] = static function (string $url, array $auth, int $ttl, int $curlTimeout = 120) use (&$calls, &$throwBrokenEnv, &$duplicateKvtInSandbox): array {
     if ($throwBrokenEnv && preg_match('#/Broken/ODataV4/#', $url) === 1) {
         throw new Exception('Broken environment down bc-secret should-not-leak');
     }
@@ -30,9 +31,13 @@ $GLOBALS['HORAE_ODATA_BC_FETCH'] = static function (string $url, array $auth, in
     ];
     if (preg_match('#/([^/]+)/ODataV4/Company(?:\\?|$)#', $url, $envMatch) === 1) {
         if (strcasecmp($envMatch[1], 'Sandbox') === 0) {
-            return [
+            $rows = [
                 ['Name' => 'Tweede BV'],
             ];
+            if ($duplicateKvtInSandbox) {
+                $rows[] = ['Name' => "KVT\xC2\xA0Gas"];
+            }
+            return $rows;
         }
         return [
             ['Name' => 'KVT Gas'],
@@ -298,6 +303,41 @@ $unknownUrl = odata_bc_url_from_odata_url("https://mimir.invalid/mimir/ODataV4/C
 if (strpos($unknownUrl, 'https://bc.example:7148/Production/ODataV4/Company(') !== 0) {
     fail('onbekend bedrijf moet op de primaire environment terugvallen: ' . $unknownUrl);
 }
+$encodedCompanyUrl = odata_bc_url_from_odata_url("https://mimir.invalid/mimir/ODataV4/Company(%27Tweede%20BV%27)/AppResource?\$select=No");
+if (strpos($encodedCompanyUrl, "https://bc.example:7148/Sandbox/ODataV4/Company(%27Tweede%20BV%27)/AppResource?") !== 0) {
+    fail('procent-gecodeerde company moet Sandbox kiezen: ' . $encodedCompanyUrl);
+}
+$apostropheCompany = odata_company_from_odata_path("/mimir/ODataV4/Company('Van%20''t%20Hof')/AppResource");
+if ($apostropheCompany !== "Van 't Hof") {
+    fail('company met apostrof werd afgekapt: ' . json_encode($apostropheCompany));
+}
+$parsedEncoded = odata_mimir_parse_entity_url("https://mimir.invalid/mimir/ODataV4/Company(%27Tweede%20BV%27)/AppResource?\$select=No");
+if (($parsedEncoded['company'] ?? '') !== 'Tweede BV' || ($parsedEncoded['entity'] ?? '') !== 'AppResource') {
+    fail('entity-parser faalt op %27-company: ' . json_encode($parsedEncoded));
+}
+if (odata_bc_environment_for_company("KVT\xC2\xA0Gas") !== 'Production') {
+    fail('nbsp in de bedrijfsnaam moet dezelfde environment opleveren');
+}
+$authListBeforeCase = $auth_list;
+$auth_list = [
+    'sandbox' => $authSandbox,
+    'Production' => $auth,
+];
+$caseAuth = odata_bc_auth_for_environment('Sandbox', []);
+if (($caseAuth['user'] ?? '') !== 'sandbox-user') {
+    fail('auth_list-sleutel moet hoofdletterongevoelig matchen: ' . json_encode($caseAuth));
+}
+$auth_list = $authListBeforeCase;
+$duplicateKvtInSandbox = true;
+odata_bc_company_map_reset();
+if (odata_bc_environment_for_company('KVT Gas') !== 'Production' || odata_bc_environment_for_company("KVT\xC2\xA0Gas") !== 'Production') {
+    fail('dubbele bedrijfsnaam moet de primaire environment houden');
+}
+if (odata_bc_environment_for_company('Tweede BV') !== 'Sandbox') {
+    fail('uniek Sandbox-bedrijf mag niet naar Production');
+}
+$duplicateKvtInSandbox = false;
+odata_bc_company_map_reset();
 $encodedUrl = odata_bc_url_from_odata_url("https://mimir.invalid/Sand%20Box/ODataV4/Company('X')/T");
 if ($encodedUrl !== 'https://bc.example:7148/Sand%20Box/ODataV4/Company(\'X\')/T') {
     fail('env-segment mag maar één keer geëncodeerd worden: ' . $encodedUrl);
@@ -315,6 +355,28 @@ if (substr_count(fallback_log(), '[Horae] companylijst voor environment Broken m
 }
 if (strpos(fallback_log(), 'should-not-leak') !== false || strpos(fallback_log(), 'broken-secret') !== false) {
     fail('environment-foutlog bevat een geheim');
+}
+$callsBeforeLeak = count($calls);
+$leakedUrl = odata_bc_url_from_odata_url("https://mimir.invalid/mimir/ODataV4/Company('Onbekend%20BV')/AppResource");
+if (!odata_bc_url_is_synthetic($leakedUrl)) {
+    fail('onbekend bedrijf bij een onvolledige company-map mag niet herschreven worden: ' . $leakedUrl);
+}
+try {
+    odata_get_all(
+        "https://mimir.invalid/mimir/ODataV4/Company('Onbekend%20BV')/AppResource?\$select=No",
+        $passedPrimary,
+        12
+    );
+    fail('onbekend bedrijf bij een onvolledige map moet de Mímir-fout teruggeven');
+} catch (Throwable $exception) {
+    if (strpos($exception->getMessage(), 'Mímir') === false) {
+        fail('onvolledige map gaf niet de Mímir-fout: ' . $exception->getMessage());
+    }
+}
+foreach (array_slice($calls, $callsBeforeLeak) as $leakCall) {
+    if (stripos($leakCall['url'], 'mimir.invalid') !== false || stripos($leakCall['url'], 'Onbekend') !== false) {
+        fail('live BC-call lekte mimir.invalid of het onbekende bedrijf: ' . json_encode($leakCall));
+    }
 }
 
 $environment = 'mimir';
@@ -436,6 +498,56 @@ try {
 if (count($calls) !== $callsBeforeSandboxRefuse) {
     fail('Sandbox-URL zonder entry mag geen BC-call doen: ' . json_encode(array_slice($calls, $callsBeforeSandboxRefuse)));
 }
+
+odata_mimir_circuit_reset();
+$baseUrl = 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/';
+$base = "https://bc.example:7148/Production/ODataV4/Company('KVT%20Gas')/";
+$environment = 'Production';
+$auth = ['mode' => 'basic', 'user' => 'bcuser', 'pass' => 'bc-secret'];
+$authSandbox = ['mode' => 'basic', 'user' => 'sandbox-user', 'pass' => 'sandbox-secret'];
+$auth_list = [
+    'Production' => $auth,
+    'Sandbox' => $authSandbox,
+];
+odata_bc_company_map_reset();
+if (odata_bc_base_url() !== 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/') {
+    fail('$baseUrl moet voorgaan op het strippen van $base: ' . json_encode(odata_bc_base_url()));
+}
+if (odata_bc_odata_root_for_environment('Sandbox') !== 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/Sandbox/ODataV4') {
+    fail('SaaS-join mist /v2.0/{tenant}/{env}/ODataV4: ' . json_encode(odata_bc_odata_root_for_environment('Sandbox')));
+}
+$beforeSaas = count($calls);
+$saasRows = odata_mimir_query('Tweede BV', 'AppResource', ['$select' => 'No'], 15);
+$saasCall = null;
+for ($i = $beforeSaas; $i < count($calls); $i++) {
+    if (strpos($calls[$i]['url'], '/AppResource?') !== false) {
+        $saasCall = $calls[$i];
+    }
+}
+$expectedSaas = "https://api.businesscentral.dynamics.com/v2.0/tenant-guid/Sandbox/ODataV4/Company('Tweede%20BV')/AppResource?";
+if (($saasRows[0]['No'] ?? '') !== 'WO-1' || !is_array($saasCall) || strpos($saasCall['url'], $expectedSaas) !== 0 || $saasCall['user'] !== 'sandbox-user') {
+    fail('SaaS-fallback gebruikte niet tenant+Sandbox: ' . json_encode($saasCall));
+}
+$saasFromMimir = odata_bc_url_from_odata_url("https://mimir.invalid/mimir/ODataV4/Company('Tweede%20BV')/AppResource?\$select=No");
+if (strpos($saasFromMimir, $expectedSaas) !== 0) {
+    fail('mimir-segment moet naar de SaaS-environment van het bedrijf: ' . $saasFromMimir);
+}
+$baseUrl = 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/Production/ODataV4';
+if (odata_bc_odata_root_for_environment('Sandbox') !== 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/Sandbox/ODataV4') {
+    fail('ODataV4-suffix moet het environment-segment vervangen: ' . json_encode(odata_bc_odata_root_for_environment('Sandbox')));
+}
+unset($baseUrl, $GLOBALS['baseUrl']);
+$base = "https://bc.example:7148/Production/ODataV4/Company('KVT%20Gas')/";
+odata_bc_company_map_reset();
+if (odata_bc_base_url() !== 'https://bc.example:7148/') {
+    fail('on-prem $base moet tot de host-root zonder env: ' . json_encode(odata_bc_base_url()));
+}
+$base = "https://api.businesscentral.dynamics.com/v2.0/tenant-guid/Production/ODataV4/Company('X')/";
+if (odata_bc_base_url() !== 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/') {
+    fail('afleiden uit SaaS-$base moet /v2.0/{tenant}/ houden: ' . json_encode(odata_bc_base_url()));
+}
+$base = "https://bc.example:7148/Production/ODataV4/Company('KVT%20Gas')/";
+odata_bc_company_map_reset();
 
 $authPath = dirname(__DIR__) . '/web/auth.php';
 if (is_file($authPath)) {

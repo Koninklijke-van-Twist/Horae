@@ -19,7 +19,7 @@ $mimirApi  = 'mimir_…';
 $mimirBase = 'https://sleutels.kvt.nl/mimir/api';
 ```
 
-Met `$mimirApi` gezet proberen OData-fetches (nightly snapshot-build, inclusief de gebatchte planning-retry, en UI/on-demand) eerst Mímir. Faalt die aanroep (verbinding/timeout, non-2xx, ongeldige JSON of een Mímir-foutpayload), dan haalt Horae dezelfde data op via het directe Business Central-pad van vóór Mímir (`$base`, `$auth` / `$auth_list`, `$environment` en de lokale odata-filecache) en slaat Mímir voor de rest van dat PHP-verzoek over. Laat die BC-credentials in `auth.php` naast `$mimirApi` staan; ontbreken ze, dan komt de oorspronkelijke Mímir-fout terug. Houd `$base` met `Company('…')` zodat entity-URLs parseerbaar blijven, of zet `$mimirCompany` zonder `$base` (fallback heeft dan alsnog een echte `$base` nodig). Zonder `$mimirApi` blijft het bestaande directe BC-pad ongewijzigd.
+Met `$mimirApi` gezet proberen OData-fetches (nightly snapshot-build, inclusief de gebatchte planning-retry, en UI/on-demand) eerst Mímir. Faalt die aanroep (verbinding/timeout, non-2xx, ongeldige JSON of een Mímir-foutpayload), dan haalt Horae dezelfde data op via het directe Business Central-pad van vóór Mímir (`$baseUrl`, `$base`, `$auth` / `$auth_list`, `$environment` en de lokale odata-filecache) en slaat Mímir voor de rest van dat PHP-verzoek over. Laat die BC-credentials in `auth.php` naast `$mimirApi` staan; ontbreken ze, dan komt de oorspronkelijke Mímir-fout terug. Houd `$base` met `Company('…')` zodat entity-URLs parseerbaar blijven, of zet `$mimirCompany` zonder `$base` (fallback heeft dan alsnog een echte `$base` of `$baseUrl` nodig). Zet `$baseUrl` op de BC-root die de fallback moet bewaren: on-prem `https://host:7148/` of SaaS `https://api.businesscentral.dynamics.com/v2.0/{tenant}/`. Zonder `$mimirApi` blijft het bestaande directe BC-pad ongewijzigd.
 
 **max_age-beleid**
 
@@ -40,4 +40,4 @@ php web/nightly.php
 
 ## auth.php
 
-Geen `auth.php` in deze repository (staat in `.gitignore`). Lokaal/op de server de Mímir-sleutel zetten zoals hierboven, en de BC-credentials (`$base`, `$auth` / `$auth_list`, `$environment`) daarnaast laten staan voor de directe fallback.
+Geen `auth.php` in deze repository (staat in `.gitignore`). Lokaal/op de server de Mímir-sleutel zetten zoals hierboven, en de BC-credentials (`$baseUrl`, `$base`, `$auth` / `$auth_list`, `$environment`) daarnaast laten staan voor de directe fallback. `$baseUrl` is de root (on-prem host of SaaS tot en met `/v2.0/{tenant}/`); `$base` blijft de company-URL.

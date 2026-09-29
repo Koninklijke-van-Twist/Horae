@@ -34,8 +34,12 @@ $end = $weekInfo['end'] ?? null;
 // Voor overrides: als er geen enkele week op het rapport staat, pak de eerste persoonsweek
 $overrideWeekNo = $weekNo;
 $overrideYearNo = $reportYear;
+$gridPeopleForWeek = $gridProject['people'] ?? ($report['gridProject']['people'] ?? []);
+if (!is_array($gridPeopleForWeek)) {
+  $gridPeopleForWeek = [];
+}
 if ($overrideWeekNo < 1) {
-  foreach (($gridProject['people'] ?? ($report['gridProject']['people'] ?? [])) as $personRow) {
+  foreach ($gridPeopleForWeek as $personRow) {
     $pw = (int) ($personRow['week'] ?? 0);
     if ($pw >= 1 && $pw <= 53) {
       $overrideWeekNo = $pw;
@@ -1808,6 +1812,57 @@ $exportQuery = http_build_query($exportQueryParams);
         return payload;
       }
 
+      function utcDate (year, month, day)
+      {
+        if (month < 1 || month > 12 || day < 1 || day > 31 || year < 2000 || year > 2100) return null;
+        const date = new Date(Date.UTC(year, month - 1, day));
+        if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+          return null;
+        }
+        return date;
+      }
+
+      function parseReportDate (value)
+      {
+        const text = String(value || '').trim();
+        if (text === '' || text.toLowerCase() === 'onbekend') return null;
+        let match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (match) return utcDate(+match[1], +match[2], +match[3]);
+        match = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+        if (match) return utcDate(+match[3], +match[2], +match[1]);
+        return null;
+      }
+
+      function formatDutchDate (date)
+      {
+        const day = String(date.getUTCDate()).padStart(2, '0');
+        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+        return day + '-' + month + '-' + date.getUTCFullYear();
+      }
+
+      function isoWeekParts (date)
+      {
+        const tmp = new Date(date.getTime());
+        const dayNr = (tmp.getUTCDay() + 6) % 7;
+        tmp.setUTCDate(tmp.getUTCDate() - dayNr + 3);
+        const isoYear = tmp.getUTCFullYear();
+        const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
+        const firstDay = (firstThursday.getUTCDay() + 6) % 7;
+        firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDay);
+        const weekNo = 1 + Math.round((tmp - firstThursday) / 86400000 / 7);
+        return { weekNo: weekNo, year: isoYear };
+      }
+
+      function reloadReport (tsNo)
+      {
+        const params = new URLSearchParams();
+        projectNos.forEach(function (no) {
+          params.append('projectNo[]', no);
+        });
+        if (tsNo) params.append('tsNo', tsNo);
+        window.location.href = 'pdf.php?' + params.toString();
+      }
+
       async function persistOverride (reset)
       {
         if (!activeCell) return;
@@ -1816,13 +1871,58 @@ $exportQuery = http_build_query($exportQueryParams);
         const saveWeek = resolveSaveWeek(activeCell);
         const saveYear = resolveSaveYear(activeCell);
         const value = reset ? null : modalInput.value;
+        const weekInvalid = saveWeek < 1 || saveWeek > 53;
 
         if (!reset && isHoursDayCell(activeCell) && !isValidHoursInput(modalInput.value)) {
           alert('Alleen getallen toegestaan (bijv. 8 of 8,5).');
           return;
         }
 
-        if (saveWeek < 1 || saveWeek > 53) {
+        if (!reset && key === 'weekInfo.start' && weekInvalid) {
+          const parsedDate = parseReportDate(value);
+          if (!parsedDate) {
+            alert('Ongeldige datum. Gebruik dd-mm-jjjj.');
+            return;
+          }
+          const iso = isoWeekParts(parsedDate);
+          if (iso.weekNo < 1 || iso.weekNo > 53 || iso.year < 2000 || iso.year > 2100) {
+            alert('Geen geldige ISO-week voor deze datum.');
+            return;
+          }
+          const endDate = new Date(parsedDate.getTime());
+          endDate.setUTCDate(endDate.getUTCDate() + 6);
+          try {
+            const created = await postOverrideAction('override_create_week', {
+              projectNo: projectNo,
+              weekNo: iso.weekNo,
+              year: iso.year
+            });
+            await postOverrideAction('override_save', {
+              projectNo: projectNo,
+              weekNo: iso.weekNo,
+              year: iso.year,
+              key: 'weekInfo.start',
+              value: formatDutchDate(parsedDate),
+              reset: false
+            });
+            await postOverrideAction('override_save', {
+              projectNo: projectNo,
+              weekNo: iso.weekNo,
+              year: iso.year,
+              key: 'weekInfo.end',
+              value: formatDutchDate(endDate),
+              reset: false
+            });
+            const tsNo = (created && created.tsNo) ? created.tsNo : ('HORAE-' + projectNo + '-Y' + iso.year + '-W' + iso.weekNo);
+            closeModal();
+            reloadReport(tsNo);
+          } catch (error) {
+            alert(error.message || 'Opslaan mislukt');
+          }
+          return;
+        }
+
+        if (weekInvalid) {
           alert('Geen geldig weeknummer voor deze overschrijving.');
           return;
         }
@@ -1854,6 +1954,10 @@ $exportQuery = http_build_query($exportQueryParams);
 
       async function addRow ()
       {
+        if (weekNo < 1 || weekNo > 53) {
+          alert('Geen geldig weeknummer. Vul eerst een startdatum in.');
+          return;
+        }
         try {
           await postOverrideAction('override_row_add', { projectNo, weekNo, year: yearNo });
           window.location.reload();
