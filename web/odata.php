@@ -135,30 +135,85 @@ function odata_auth_is_usable($auth): bool
 }
 
 /**
- * Host-root van BC (https://host:port/), uit $baseUrl of uit Horae's $base.
+ * BC-root voor de directe fallback. $baseUrl wint en blijft intact
+ * (SaaS /v2.0/{tenant}/ wordt niet tot de host gestript).
+ * Uit $base knippen we alleen /{env}/ODataV4/… weg.
  * Synthetische mimir.invalid-URL's tellen niet.
  */
 function odata_bc_base_url(): ?string
 {
     odata_ensure_bc_auth_loaded();
     global $baseUrl, $base;
-    $candidates = [];
+
     if (isset($baseUrl) && is_string($baseUrl)) {
-        $candidates[] = $baseUrl;
+        $candidate = trim($baseUrl);
+        if ($candidate !== '' && stripos($candidate, 'mimir.invalid') === false) {
+            return rtrim($candidate, '/') . '/';
+        }
     }
+
     if (isset($base) && is_string($base)) {
-        $candidates[] = $base;
-    }
-    foreach ($candidates as $candidate) {
-        $trimmed = trim($candidate);
+        $trimmed = trim($base);
         if ($trimmed === '' || stripos($trimmed, 'mimir.invalid') !== false) {
-            continue;
+            return null;
+        }
+        if (preg_match('#^(https?://.+?)/[^/]+/ODataV4(?:/|$)#i', $trimmed, $match) === 1) {
+            return rtrim($match[1], '/') . '/';
+        }
+        if (preg_match('#^(https?://.+)/ODataV4(?:/|$)#i', $trimmed, $match) === 1) {
+            return rtrim($match[1], '/') . '/';
         }
         if (preg_match('#^(https?://[^/]+/)#i', $trimmed, $match) === 1) {
             return $match[1];
         }
     }
     return null;
+}
+
+function odata_bc_company_path_segment(string $company): string
+{
+    $company = str_replace("'", "''", trim($company));
+    return "Company('" . rawurlencode($company) . "')";
+}
+
+/**
+ * {root}/{env}/ODataV4. Eindigt $baseUrl al op /ODataV4, dan vervangt een bekend
+ * environment-segment; anders wordt het environment vóór ODataV4 gezet
+ * (Vulcanus/Hermes, zodat /v2.0/{tenant}/ blijft staan).
+ */
+function odata_bc_odata_root_for_environment(string $env): ?string
+{
+    $base = odata_bc_base_url();
+    $env = trim($env);
+    if ($base === null || $env === '' || strcasecmp($env, 'mimir') === 0) {
+        return null;
+    }
+    $encoded = rawurlencode(rawurldecode($env));
+    $base = rtrim($base, '/');
+    if (preg_match('#/ODataV4$#i', $base) !== 1) {
+        return $base . '/' . $encoded . '/ODataV4';
+    }
+    if (preg_match('#^(.*)/([^/]+)/ODataV4$#i', $base, $match) !== 1) {
+        return $base;
+    }
+    $segment = rawurldecode($match[2]);
+    $known = strcasecmp($segment, $env) === 0;
+    $primary = odata_bc_environment();
+    if ($primary !== null && strcasecmp($segment, $primary) === 0) {
+        $known = true;
+    }
+    if (!$known) {
+        foreach (odata_bc_configured_environments() as $configured) {
+            if (strcasecmp($segment, $configured) === 0) {
+                $known = true;
+                break;
+            }
+        }
+    }
+    if ($known) {
+        return $match[1] . '/' . $encoded . '/ODataV4';
+    }
+    return $match[1] . '/' . $match[2] . '/' . $encoded . '/ODataV4';
 }
 
 function odata_bc_environment(): ?string
@@ -508,7 +563,15 @@ function odata_bc_url_from_odata_url(string $url): string
     if ($env === null || strcasecmp($env, 'mimir') === 0) {
         return $url;
     }
-    $rebuilt = $base . rawurlencode($env) . $match[2];
+    $root = odata_bc_odata_root_for_environment($env);
+    if ($root === null) {
+        return $url;
+    }
+    $tail = $match[2];
+    if (preg_match('#^/ODataV4(.*)$#i', $tail, $tailMatch) === 1) {
+        $tail = $tailMatch[1];
+    }
+    $rebuilt = rtrim($root, '/') . $tail;
     if (isset($parts['query']) && is_string($parts['query']) && $parts['query'] !== '') {
         $rebuilt .= '?' . $parts['query'];
     }
@@ -673,13 +736,13 @@ function odata_mimir_companies_as_rows_impl(?string $environment = null): array
  */
 function odata_direct_companies_for_environment(string $env): array
 {
-    $base = odata_bc_base_url();
+    $root = odata_bc_odata_root_for_environment($env);
     $auth = odata_bc_auth_for_environment($env, []);
-    if ($base === null || $auth === null) {
+    if ($root === null || $auth === null) {
         odata_rethrow_last_mimir_error();
     }
 
-    $rows = odata_get_all_direct($base . rawurlencode($env) . '/ODataV4/Company', $auth, 300);
+    $rows = odata_get_all_direct($root . '/Company', $auth, 300);
     $out = [];
     foreach ($rows as $row) {
         if (!is_array($row)) {
@@ -960,9 +1023,9 @@ function odata_mimir_query_impl(string $company, string $table, array $odataQuer
 function odata_direct_query(string $company, string $table, array $odataQuery, int $ttlSeconds): array
 {
     $env = odata_bc_environment_for_company_resolved($company);
-    $base = odata_bc_base_url();
+    $root = $env !== null ? odata_bc_odata_root_for_environment($env) : null;
     $auth = $env !== null ? odata_bc_auth_for_environment($env, []) : null;
-    if ($env === null || $base === null || $auth === null) {
+    if ($env === null || $root === null || $auth === null) {
         odata_rethrow_last_mimir_error();
     }
 
@@ -979,7 +1042,7 @@ function odata_direct_query(string $company, string $table, array $odataQuery, i
         $params[$odataKey] = $value;
     }
 
-    $url = $base . rawurlencode($env) . "/ODataV4/Company('" . rawurlencode($company) . "')/" . $table;
+    $url = $root . '/' . odata_bc_company_path_segment($company) . '/' . $table;
     if ($params !== []) {
         $url .= '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
     }

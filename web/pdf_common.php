@@ -579,6 +579,21 @@ function pdf_finalize_report(array &$report, string $reportKey, array $tsNos): v
             $weekSlots[$slotYear . '|' . $slotWeek] = ['year' => $slotYear, 'week' => $slotWeek];
         }
     }
+    foreach ($tsNos as $tsNo) {
+        if (!is_string($tsNo) || $tsNo === '') {
+            continue;
+        }
+        $parsedTs = overrides_parse_synthetic_ts_no($tsNo);
+        if ($parsedTs === null) {
+            continue;
+        }
+        $slotWeek = (int) ($parsedTs['weekNo'] ?? 0);
+        $slotYear = (int) ($parsedTs['year'] ?? 0);
+        if ($slotWeek < 1 || $slotWeek > 53) {
+            continue;
+        }
+        $weekSlots[$slotYear . '|' . $slotWeek] = ['year' => $slotYear, 'week' => $slotWeek];
+    }
 
     $overrideMap = [];
     foreach ($projectNos as $pNo) {
@@ -786,9 +801,24 @@ function pdf_load_reports(string $baseApp, array $auth, array $query): array
         }
     }
 
+    $listedOverrides = overrides_list_for_projects($projectNos);
+    $projectsWithSynthetic = [];
+    foreach ($syntheticRequests as $req) {
+        $projectsWithSynthetic[(string) ($req['projectNo'] ?? '')] = true;
+    }
+    foreach ($listedOverrides as $item) {
+        $projectsWithSynthetic[(string) ($item['projectNo'] ?? '')] = true;
+    }
+
     $partialReports = [];
     foreach ($projectNos as $projectNo) {
-        $partialReports[] = pdf_build_report_for_project($projectNo, $projectNos, $baseApp, $auth);
+        $built = pdf_build_report_for_project($projectNo, $projectNos, $baseApp, $auth);
+        $people = $built['gridProject']['people'] ?? [];
+        $emptyShell = ((int) ($built['weekNo'] ?? 0) < 1) && (!is_array($people) || count($people) === 0);
+        if ($emptyShell && !empty($projectsWithSynthetic[$projectNo])) {
+            continue;
+        }
+        $partialReports[] = $built;
     }
 
     foreach ($syntheticRequests as $req) {
@@ -807,7 +837,6 @@ function pdf_load_reports(string $baseApp, array $auth, array $query): array
             $bcSlots[] = $slot;
         }
     }
-    $listedOverrides = overrides_list_for_projects($projectNos);
     foreach (pdf_extra_override_week_requests($projectNos, $syntheticRequests, $listedOverrides, $bcSlots) as $req) {
         $projectNo = $req['projectNo'];
         $weekNo = $req['weekNo'];

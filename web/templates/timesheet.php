@@ -48,14 +48,6 @@ if ($overrideWeekNo < 1) {
     }
   }
 }
-$showCreateWeek = ($overrideWeekNo < 1) || count($gridPeopleForWeek) === 0;
-$createWeekDefault = '';
-if (is_string($start) && $start !== '' && strcasecmp($start, 'onbekend') !== 0) {
-  $shownStart = fmtDateNL($start);
-  if (preg_match('/^\d{2}-\d{2}-\d{4}$/', $shownStart) === 1) {
-    $createWeekDefault = $shownStart;
-  }
-}
 $signatures = $report['signatures'] ?? [
   'hoofdaannemer' => '',
   'onderaannemer' => '',
@@ -713,23 +705,6 @@ $exportQuery = http_build_query($exportQueryParams);
       text-decoration: none;
     }
 
-    .ts-create-week {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .ts-create-week input {
-      min-height: 32px;
-      width: 8.5rem;
-      border: 1px solid #cbd5e1;
-      border-radius: 8px;
-      padding: 0 8px;
-      font: inherit;
-      font-size: 13px;
-      box-sizing: border-box;
-    }
-
     .ts-btn {
       appearance: none;
       display: inline-flex;
@@ -1314,12 +1289,6 @@ $exportQuery = http_build_query($exportQueryParams);
     <?php if ($isHoraeOnly): ?>
       <button type="button" class="ts-btn ts-btn-danger" id="deleteWeekBtn-<?= h($timesheetDomId) ?>">Horae-week verwijderen</button>
     <?php endif; ?>
-    <?php if ($showCreateWeek): ?>
-      <span class="ts-create-week">
-        <input type="text" id="createWeekDate-<?= h($timesheetDomId) ?>" inputmode="numeric" autocomplete="off" placeholder="dd-mm-jjjj" aria-label="Startdatum voor nieuwe week" value="<?= h($createWeekDefault) ?>">
-        <button type="button" class="ts-btn" id="createWeekBtn-<?= h($timesheetDomId) ?>">Week aanmaken</button>
-      </span>
-    <?php endif; ?>
   </div>
   <?php if (count($headerConflicts) > 0): ?>
   <div class="no-print" style="margin-bottom:12px; padding:10px 12px; border:1px solid #f59e0b; background:#fffbeb; border-radius:10px; color:#92400e; font-size:13px;">
@@ -1825,9 +1794,6 @@ $exportQuery = http_build_query($exportQueryParams);
         cell.classList.toggle('has-override', !!enabled);
       }
 
-      const createWeekBtn = document.getElementById('createWeekBtn-<?= h($timesheetDomId) ?>');
-      const createWeekDate = document.getElementById('createWeekDate-<?= h($timesheetDomId) ?>');
-
       async function postOverrideAction (action, body)
       {
         const response = await fetch('odata.php?action=' + action, {
@@ -1897,34 +1863,6 @@ $exportQuery = http_build_query($exportQueryParams);
         window.location.href = 'pdf.php?' + params.toString();
       }
 
-      async function createWeekFromDate (dateText, saveKey, saveValue)
-      {
-        const parsed = parseReportDate(dateText);
-        if (!parsed) {
-          throw new Error('Geen geldige datum. Gebruik dd-mm-jjjj.');
-        }
-        const iso = isoWeekParts(parsed);
-        if (iso.weekNo < 1 || iso.weekNo > 53 || iso.year < 2000 || iso.year > 2100) {
-          throw new Error('Geen geldige ISO-week voor deze datum.');
-        }
-        const created = await postOverrideAction('override_create_week', {
-          projectNo: projectNo,
-          weekNo: iso.weekNo,
-          year: iso.year
-        });
-        if (saveKey) {
-          await postOverrideAction('override_save', {
-            projectNo: projectNo,
-            weekNo: iso.weekNo,
-            year: iso.year,
-            key: saveKey,
-            value: saveValue,
-            reset: false
-          });
-        }
-        return { weekNo: iso.weekNo, year: iso.year, tsNo: created.tsNo || '' };
-      }
-
       async function persistOverride (reset)
       {
         if (!activeCell) return;
@@ -1934,39 +1872,62 @@ $exportQuery = http_build_query($exportQueryParams);
         const saveYear = resolveSaveYear(activeCell);
         const value = reset ? null : modalInput.value;
         const weekInvalid = saveWeek < 1 || saveWeek > 53;
-        const isWeekDate = key === 'weekInfo.start' || key === 'weekInfo.end';
 
         if (!reset && isHoursDayCell(activeCell) && !isValidHoursInput(modalInput.value)) {
           alert('Alleen getallen toegestaan (bijv. 8 of 8,5).');
           return;
         }
 
-        try {
-          if (!reset && (weekInvalid || isWeekDate)) {
-            let dateText = isWeekDate ? String(value || '') : '';
-            if (isWeekDate && !parseReportDate(dateText)) {
-              alert('Geen geldige datum. Gebruik dd-mm-jjjj.');
-              return;
-            }
-            if (!parseReportDate(dateText)) {
-              const startCell = root.querySelector('[data-override-key="weekInfo.start"]');
-              dateText = startCell ? getCellDisplayValue(startCell) : '';
-            }
-            if (!parseReportDate(dateText)) {
-              alert('Geen geldig weeknummer. Vul eerst een startdatum in (dd-mm-jjjj) of gebruik Week aanmaken.');
-              return;
-            }
-            const ensured = await createWeekFromDate(dateText, key, value);
+        if (!reset && key === 'weekInfo.start' && weekInvalid) {
+          const parsedDate = parseReportDate(value);
+          if (!parsedDate) {
+            alert('Ongeldige datum. Gebruik dd-mm-jjjj.');
+            return;
+          }
+          const iso = isoWeekParts(parsedDate);
+          if (iso.weekNo < 1 || iso.weekNo > 53 || iso.year < 2000 || iso.year > 2100) {
+            alert('Geen geldige ISO-week voor deze datum.');
+            return;
+          }
+          const endDate = new Date(parsedDate.getTime());
+          endDate.setUTCDate(endDate.getUTCDate() + 6);
+          try {
+            const created = await postOverrideAction('override_create_week', {
+              projectNo: projectNo,
+              weekNo: iso.weekNo,
+              year: iso.year
+            });
+            await postOverrideAction('override_save', {
+              projectNo: projectNo,
+              weekNo: iso.weekNo,
+              year: iso.year,
+              key: 'weekInfo.start',
+              value: formatDutchDate(parsedDate),
+              reset: false
+            });
+            await postOverrideAction('override_save', {
+              projectNo: projectNo,
+              weekNo: iso.weekNo,
+              year: iso.year,
+              key: 'weekInfo.end',
+              value: formatDutchDate(endDate),
+              reset: false
+            });
+            const tsNo = (created && created.tsNo) ? created.tsNo : ('HORAE-' + projectNo + '-Y' + iso.year + '-W' + iso.weekNo);
             closeModal();
-            reloadReport(ensured.tsNo);
-            return;
+            reloadReport(tsNo);
+          } catch (error) {
+            alert(error.message || 'Opslaan mislukt');
           }
+          return;
+        }
 
-          if (weekInvalid) {
-            alert('Geen geldig weeknummer voor deze overschrijving.');
-            return;
-          }
+        if (weekInvalid) {
+          alert('Geen geldig weeknummer voor deze overschrijving.');
+          return;
+        }
 
+        try {
           await postOverrideAction('override_save', {
             projectNo,
             weekNo: saveWeek,
@@ -1994,7 +1955,7 @@ $exportQuery = http_build_query($exportQueryParams);
       async function addRow ()
       {
         if (weekNo < 1 || weekNo > 53) {
-          alert('Maak eerst een week aan via een startdatum.');
+          alert('Geen geldig weeknummer. Vul eerst een startdatum in.');
           return;
         }
         try {
@@ -2137,22 +2098,6 @@ $exportQuery = http_build_query($exportQueryParams);
         } catch (error) {
           alert(error.message || 'Week verwijderen mislukt');
         }
-      }
-
-      if (createWeekBtn && createWeekDate) {
-        createWeekBtn.addEventListener('click', async function () {
-          try {
-            const parsed = parseReportDate(createWeekDate.value);
-            if (!parsed) {
-              alert('Geen geldige datum. Gebruik dd-mm-jjjj.');
-              return;
-            }
-            const ensured = await createWeekFromDate(createWeekDate.value, 'weekInfo.start', formatDutchDate(parsed));
-            reloadReport(ensured.tsNo);
-          } catch (error) {
-            alert(error.message || 'Week aanmaken mislukt');
-          }
-        });
       }
 
       if (deleteWeekBtn) {

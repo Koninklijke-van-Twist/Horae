@@ -64,7 +64,7 @@ function overrides_parse_date(string $value): ?DateTimeImmutable
 }
 
 /**
- * @return array{weekNo:int,year:int}|null
+ * @return array{year:int,weekNo:int,ymd:string}|null
  */
 function overrides_iso_week_from_date(string $value): ?array
 {
@@ -77,7 +77,11 @@ function overrides_iso_week_from_date(string $value): ?array
     if ($weekNo < 1 || $weekNo > 53 || $year < 2000 || $year > 2100) {
         return null;
     }
-    return ['weekNo' => $weekNo, 'year' => $year];
+    return [
+        'year' => $year,
+        'weekNo' => $weekNo,
+        'ymd' => $dt->format('Y-m-d'),
+    ];
 }
 
 function overrides_file_path(string $projectNo, int $weekNo, int $year = 0): string

@@ -20,11 +20,12 @@ function assert_same($expected, $actual, string $message): void
 }
 
 $cases = [
-    '2026-03-16' => ['weekNo' => 12, 'year' => 2026],
-    '16-03-2026' => ['weekNo' => 12, 'year' => 2026],
-    '16/03/2026' => ['weekNo' => 12, 'year' => 2026],
-    '30-12-2024' => ['weekNo' => 1, 'year' => 2025],
-    '01-01-2021' => ['weekNo' => 53, 'year' => 2020],
+    '2026-03-16' => ['year' => 2026, 'weekNo' => 12, 'ymd' => '2026-03-16'],
+    '16-03-2026' => ['year' => 2026, 'weekNo' => 12, 'ymd' => '2026-03-16'],
+    '16/03/2026' => ['year' => 2026, 'weekNo' => 12, 'ymd' => '2026-03-16'],
+    '05-01-2026' => ['year' => 2026, 'weekNo' => 2, 'ymd' => '2026-01-05'],
+    '30-12-2024' => ['year' => 2025, 'weekNo' => 1, 'ymd' => '2024-12-30'],
+    '01-01-2021' => ['year' => 2020, 'weekNo' => 53, 'ymd' => '2021-01-01'],
 ];
 foreach ($cases as $input => $expected) {
     assert_same($expected, overrides_iso_week_from_date($input), 'ISO-week voor ' . $input);
@@ -122,6 +123,22 @@ try {
     if (!$found) {
         fail('overrides_list_for_projects ziet de week niet');
     }
+    $shellReport = [
+        'projectNo' => $project,
+        'projectNos' => [$project],
+        'weekNo' => 0,
+        'year' => 0,
+        'isHoraeOnly' => false,
+        'weekInfo' => ['week' => 0, 'start' => 'onbekend', 'end' => 'onbekend'],
+        'contractor' => [],
+        'projectDisplay' => [],
+        'gridProject' => ['people' => []],
+        'signatures' => [],
+        'documentStatus' => '',
+        'totals' => ['days' => array_fill(0, 7, 0.0), 'all' => 0.0],
+    ];
+    pdf_finalize_report($shellReport, $project, ['HORAE-' . $project . '-Y2026-W12']);
+    assert_same('16-03-2026', (string) ($shellReport['weekInfo']['start'] ?? ''), 'synthetisch tsNo past de startdatum toe');
     $fromDiskExtra = pdf_extra_override_week_requests([$project], [], $fromDisk, []);
     if (count($fromDiskExtra) !== 1 || $fromDiskExtra[0]['tsNo'] !== 'HORAE-' . $project . '-Y2026-W12') {
         fail('schijfweek wordt niet automatisch meegenomen: ' . json_encode($fromDiskExtra));

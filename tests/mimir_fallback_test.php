@@ -499,6 +499,56 @@ if (count($calls) !== $callsBeforeSandboxRefuse) {
     fail('Sandbox-URL zonder entry mag geen BC-call doen: ' . json_encode(array_slice($calls, $callsBeforeSandboxRefuse)));
 }
 
+odata_mimir_circuit_reset();
+$baseUrl = 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/';
+$base = "https://bc.example:7148/Production/ODataV4/Company('KVT%20Gas')/";
+$environment = 'Production';
+$auth = ['mode' => 'basic', 'user' => 'bcuser', 'pass' => 'bc-secret'];
+$authSandbox = ['mode' => 'basic', 'user' => 'sandbox-user', 'pass' => 'sandbox-secret'];
+$auth_list = [
+    'Production' => $auth,
+    'Sandbox' => $authSandbox,
+];
+odata_bc_company_map_reset();
+if (odata_bc_base_url() !== 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/') {
+    fail('$baseUrl moet voorgaan op het strippen van $base: ' . json_encode(odata_bc_base_url()));
+}
+if (odata_bc_odata_root_for_environment('Sandbox') !== 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/Sandbox/ODataV4') {
+    fail('SaaS-join mist /v2.0/{tenant}/{env}/ODataV4: ' . json_encode(odata_bc_odata_root_for_environment('Sandbox')));
+}
+$beforeSaas = count($calls);
+$saasRows = odata_mimir_query('Tweede BV', 'AppResource', ['$select' => 'No'], 15);
+$saasCall = null;
+for ($i = $beforeSaas; $i < count($calls); $i++) {
+    if (strpos($calls[$i]['url'], '/AppResource?') !== false) {
+        $saasCall = $calls[$i];
+    }
+}
+$expectedSaas = "https://api.businesscentral.dynamics.com/v2.0/tenant-guid/Sandbox/ODataV4/Company('Tweede%20BV')/AppResource?";
+if (($saasRows[0]['No'] ?? '') !== 'WO-1' || !is_array($saasCall) || strpos($saasCall['url'], $expectedSaas) !== 0 || $saasCall['user'] !== 'sandbox-user') {
+    fail('SaaS-fallback gebruikte niet tenant+Sandbox: ' . json_encode($saasCall));
+}
+$saasFromMimir = odata_bc_url_from_odata_url("https://mimir.invalid/mimir/ODataV4/Company('Tweede%20BV')/AppResource?\$select=No");
+if (strpos($saasFromMimir, $expectedSaas) !== 0) {
+    fail('mimir-segment moet naar de SaaS-environment van het bedrijf: ' . $saasFromMimir);
+}
+$baseUrl = 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/Production/ODataV4';
+if (odata_bc_odata_root_for_environment('Sandbox') !== 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/Sandbox/ODataV4') {
+    fail('ODataV4-suffix moet het environment-segment vervangen: ' . json_encode(odata_bc_odata_root_for_environment('Sandbox')));
+}
+unset($baseUrl, $GLOBALS['baseUrl']);
+$base = "https://bc.example:7148/Production/ODataV4/Company('KVT%20Gas')/";
+odata_bc_company_map_reset();
+if (odata_bc_base_url() !== 'https://bc.example:7148/') {
+    fail('on-prem $base moet tot de host-root zonder env: ' . json_encode(odata_bc_base_url()));
+}
+$base = "https://api.businesscentral.dynamics.com/v2.0/tenant-guid/Production/ODataV4/Company('X')/";
+if (odata_bc_base_url() !== 'https://api.businesscentral.dynamics.com/v2.0/tenant-guid/') {
+    fail('afleiden uit SaaS-$base moet /v2.0/{tenant}/ houden: ' . json_encode(odata_bc_base_url()));
+}
+$base = "https://bc.example:7148/Production/ODataV4/Company('KVT%20Gas')/";
+odata_bc_company_map_reset();
+
 $authPath = dirname(__DIR__) . '/web/auth.php';
 if (is_file($authPath)) {
     // Bestaande credentials blijven onaangeroerd.
