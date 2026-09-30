@@ -58,11 +58,14 @@ $originals = $report['originals'] ?? [];
 $overrideKeys = $report['overrideKeys'] ?? [];
 $overrideSet = array_fill_keys($overrideKeys, true);
 
+if (!function_exists('ts_cell_class')) {
 function ts_cell_class(string $key, array $overrideSet): string
 {
   return isset($overrideSet[$key]) ? 'editable-cell has-override' : 'editable-cell';
 }
+}
 
+if (!function_exists('ts_td_attrs')) {
 function ts_td_attrs(string $key, string $label, string $value, array $originals, array $overrideSet, ?string $rowLabel = null, ?int $saveWeek = null, ?string $extraClass = null, ?int $saveYear = null): string
 {
   $original = $originals[$key] ?? $value;
@@ -75,7 +78,9 @@ function ts_td_attrs(string $key, string $label, string $value, array $originals
   }
   return 'class="' . $class . '" data-override-key="' . h($key) . '" data-label="' . h($label) . '"' . $rowPart . $weekPart . $yearPart . ' data-original="' . h($original) . '" title="Klik om te bewerken" tabindex="0" role="button"';
 }
+}
 
+if (!function_exists('ts_render_value')) {
 function ts_render_value(string $value, bool $bold = false): string
 {
   $display = h($value);
@@ -83,6 +88,7 @@ function ts_render_value(string $value, bool $bold = false): string
     $display = '&nbsp;';
   }
   return $bold ? '<b>' . $display . '</b>' : $display;
+}
 }
 
 $dayNames = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
@@ -1464,7 +1470,16 @@ $exportQuery = http_build_query($exportQueryParams);
               </button>
             <?php endif; ?>
           </td>
-          <td class="bsn-cell"><span class="bsn-value"><?= ts_render_value($bsn) ?></span></td>
+          <?php if ($isAdded && !$pdfExportMode): ?>
+            <?php
+            $bsnKey = 'people.' . $personKey . '.bsn';
+            $bsnOriginals = $originals;
+            $bsnOriginals[$bsnKey] = 'Onbekend';
+            ?>
+          <td <?= ts_td_attrs($bsnKey, 'BSN/Sofinummer', (string) $bsn, $bsnOriginals, $overrideSet, $rowLabel, (int) $weekVal, 'bsn-cell', $saveYear) ?> data-field-type="bsn"><span class="bsn-value"><?= ts_render_value((string) $bsn) ?></span></td>
+          <?php else: ?>
+          <td class="bsn-cell"><span class="bsn-value"><?= ts_render_value((string) $bsn) ?></span></td>
+          <?php endif; ?>
           <td <?= ts_td_attrs('people.' . $personKey . '.name', 'Naam en voorletters werknemer', $name, $originals, $overrideSet, $rowLabel, (int) $weekVal, 'name', $saveYear) ?>><?= ts_render_value($name) ?></td>
           <td <?= ts_td_attrs('people.' . $personKey . '.week', 'Week', (string) $weekVal, $originals, $overrideSet, $rowLabel, (int) $weekVal, 'num', $saveYear) ?>><?= $weekDisplay !== '' ? $weekDisplay : '&nbsp;' ?></td>
           <?php for ($i = 0; $i < 7; $i++): ?>
@@ -1660,12 +1675,24 @@ $exportQuery = http_build_query($exportQueryParams);
       function setCellDisplayValue (cell, value)
       {
         const label = cell.querySelector('p.blue');
-        const isBold = cell.querySelector('b') !== null || (cell.dataset.overrideKey || '').endsWith('.total');
+        const isBsn = isBsnCell(cell);
+        const isBold = !isBsn && (cell.querySelector('b') !== null || (cell.dataset.overrideKey || '').endsWith('.total'));
         cell.textContent = '';
         if (label) {
           cell.appendChild(label.cloneNode(true));
         }
         const display = value || '';
+        if (isBsn) {
+          const span = document.createElement('span');
+          span.className = 'bsn-value';
+          if (display === '') {
+            span.innerHTML = '&nbsp;';
+          } else {
+            span.textContent = display;
+          }
+          cell.appendChild(span);
+          return;
+        }
         if (isBold) {
           const b = document.createElement('b');
           b.textContent = display;
@@ -1680,6 +1707,11 @@ $exportQuery = http_build_query($exportQueryParams);
       function isHoursDayCell (cell)
       {
         return cell && cell.dataset.fieldType === 'hours';
+      }
+
+      function isBsnCell (cell)
+      {
+        return cell && cell.dataset.fieldType === 'bsn';
       }
 
       function parseHoursInput (value)
@@ -1763,18 +1795,28 @@ $exportQuery = http_build_query($exportQueryParams);
         const label = cell.dataset.label || 'veld';
         const rowLabel = cell.dataset.rowLabel ? ' ' + cell.dataset.rowLabel : '';
         modalTitle.textContent = 'Geef een overschrijving op voor ' + label + rowLabel;
+        modalInput.removeAttribute('maxlength');
+        modalInput.removeAttribute('autocomplete');
         if (isHoursDayCell(cell)) {
           modalHint.textContent = 'Voer uren in (alleen getallen, bijv. 8 of 8,5).';
           modalInput.inputMode = 'decimal';
           modalInput.setAttribute('inputmode', 'decimal');
           modalInput.setAttribute('pattern', '[0-9]+([,.][0-9]+)?');
+        } else if (isBsnCell(cell)) {
+          modalHint.textContent = 'BSN van 9 cijfers. Deze waarde staat alleen in Horae, niet in BC.';
+          modalInput.inputMode = 'numeric';
+          modalInput.setAttribute('inputmode', 'numeric');
+          modalInput.setAttribute('pattern', '[0-9]{9}');
+          modalInput.setAttribute('maxlength', '9');
+          modalInput.setAttribute('autocomplete', 'off');
         } else {
           modalHint.textContent = 'Let op: Deze waarde wordt niet in BC ingevoerd, en bestaat alleen op Horae.';
           modalInput.inputMode = 'text';
           modalInput.setAttribute('inputmode', 'text');
           modalInput.removeAttribute('pattern');
         }
-        modalInput.value = getCellDisplayValue(cell);
+        const shownValue = getCellDisplayValue(cell);
+        modalInput.value = isBsnCell(cell) && shownValue.toLowerCase() === 'onbekend' ? '' : shownValue;
         modal.classList.add('open');
         modal.setAttribute('aria-hidden', 'false');
         modalInput.focus();
@@ -1876,6 +1918,19 @@ $exportQuery = http_build_query($exportQueryParams);
         if (!reset && isHoursDayCell(activeCell) && !isValidHoursInput(modalInput.value)) {
           alert('Alleen getallen toegestaan (bijv. 8 of 8,5).');
           return;
+        }
+
+        if (!reset && isBsnCell(activeCell)) {
+          const bsnText = String(modalInput.value || '').trim();
+          if (bsnText !== '' && !/^[0-9]{9}$/.test(bsnText)) {
+            alert('BSN moet uit 9 cijfers bestaan.');
+            return;
+          }
+          if (bsnText === '') {
+            reset = true;
+          } else {
+            modalInput.value = bsnText;
+          }
         }
 
         if (!reset && key === 'weekInfo.start' && weekInvalid) {
