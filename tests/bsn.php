@@ -44,7 +44,7 @@ check(count($people) === 1 && $people[0]['resourceNo'] === 'A-01', 'Keep explici
 $report = ['gridProject' => ['people' => array_merge($people, [
     $people[0],
     ['key' => 'deleted', 'resourceNo' => 'B', 'isDeleted' => true, 'bsn' => 'stale'],
-    ['key' => 'manual', 'isAdded' => true, 'bsn' => 'stale'],
+    ['key' => 'manual', 'isAdded' => true, 'resourceNo' => 'SHOULD-NOT', 'bsn' => 'stale'],
 ])]];
 bsn_enrich_report($report, function ($nos) {
     check($nos === ['A-01'], 'Do not fetch deleted, manual, zero-hour or duplicate employees');
@@ -71,6 +71,79 @@ foreach ([in_array('--export', $argv, true)] as $export) {
     check(!str_contains($html, 'data-override-key="people.' . $key . '.bsn"'), 'BSN is read-only');
     check(str_contains($html, 'assets/bsn-privacy.js') === !$export, 'Privacy script only on interactive page');
 }
+$addedProject = 'ZZBSN2943';
+$addedWeek = 41;
+$addedYear = 2026;
+try {
+    $added = overrides_row_add($addedProject, $addedWeek, $addedYear);
+    $addedKey = $added['personKey'];
+    check(str_starts_with($addedKey, 'horae-add-'), 'Added row uses a Horae key');
+    rejects(fn() => overrides_set_value($addedProject, $addedWeek, 'people.horae-add-deadbeef.bsn', '111111111', $addedYear));
+    rejects(fn() => overrides_set_value($addedProject, $addedWeek, 'people.' . $addedKey . '.bsn', '123', $addedYear));
+    rejects(fn() => overrides_set_value($addedProject, $addedWeek, 'people.' . $addedKey . '.resourceNo', 'B', $addedYear));
+    overrides_set_value($addedProject, $addedWeek, 'people.' . $addedKey . '.bsn', '000000001', $addedYear);
+    $stored = overrides_read($addedProject, $addedWeek, $addedYear);
+    check(($stored['overrides']['people.' . $addedKey . '.bsn'] ?? '') === '000000001', 'Manual BSN keeps leading zeros');
+    overrides_set_value($addedProject, $addedWeek, 'people.' . $addedKey . '.bsn', 'Onbekend', $addedYear);
+    $cleared = overrides_read($addedProject, $addedWeek, $addedYear);
+    check(!isset($cleared['overrides']['people.' . $addedKey . '.bsn']), 'Onbekend clears a manual BSN');
+    overrides_set_value($addedProject, $addedWeek, 'people.' . $addedKey . '.bsn', '111111111', $addedYear);
+
+    $manualReport = [
+        'projectNo' => $addedProject,
+        'projectNos' => [$addedProject],
+        'weekNo' => $addedWeek,
+        'year' => $addedYear,
+        'isHoraeOnly' => true,
+        'weekInfo' => ['week' => $addedWeek, 'start' => '2026-10-05', 'end' => '2026-10-11'],
+        'contractor' => [],
+        'serviceLocation' => [],
+        'project' => ['No' => $addedProject],
+        'projectDisplay' => [],
+        'locations' => [],
+        'gridProject' => ['people' => [], 'multiYear' => false],
+        'totals' => ['days' => array_fill(0, 7, 0.0), 'all' => 0.0],
+        'signatures' => ['hoofdaannemer' => '', 'onderaannemer' => '', 'uitvoerder' => ''],
+        'headerConflicts' => [],
+        'documentStatus' => '',
+    ];
+    pdf_finalize_report($manualReport, $addedProject, ['HORAE-' . $addedProject . '-Y' . $addedYear . '-W' . $addedWeek]);
+    bsn_enrich_report($manualReport, function ($nos) {
+        check($nos === [], 'Manual BSN must not contact Graph');
+        return [];
+    });
+    $manualPeople = $manualReport['gridProject']['people'];
+    check(count($manualPeople) === 1 && $manualPeople[0]['bsn'] === '111111111' && !empty($manualPeople[0]['isAdded']), 'Finalize keeps manual BSN on an added row');
+    check(!preg_grep('/\.bsn$/', array_keys($manualReport['originals'])), 'Manual BSN stays out of originals');
+    $manualExport = in_array('--export', $argv ?? [], true);
+    $manualHtml = pdf_render_report_html($manualReport, $manualExport);
+    check(str_contains($manualHtml, '<span class="bsn-value">111111111</span>'), 'Manual BSN is shown');
+    if ($manualExport) {
+        check(!str_contains($manualHtml, 'data-override-key="people.' . $addedKey . '.bsn"'), 'Export does not edit BSN');
+    } else {
+        check(preg_match('/data-override-key="people\.' . preg_quote($addedKey, '/') . '\.bsn"[^>]*data-original="Onbekend"/', $manualHtml) === 1, 'Added row BSN is editable and resets to Onbekend');
+        check(str_contains($manualHtml, 'data-field-type="bsn"'), 'BSN cell is marked for the editor');
+    }
+
+    $foreign = overrides_default_payload($addedProject, 42, null, $addedYear);
+    $foreign['overrides'] = [
+        'rows.added' => json_encode([$addedKey]),
+        'people.' . $addedKey . '.bsn' => '222222222',
+        'people.bc-row.bsn' => '333333333',
+        'people.' . $addedKey . '.resourceNo' => 'NOPE',
+        'people.' . $addedKey . '.name' => 'Test',
+    ];
+    overrides_write($foreign);
+    $foreignRead = overrides_read($addedProject, 42, $addedYear);
+    check(($foreignRead['overrides']['people.' . $addedKey . '.bsn'] ?? '') === '222222222', 'Valid added BSN survives write');
+    check(!isset($foreignRead['overrides']['people.bc-row.bsn']), 'BC BSN stripped on write');
+    check(!isset($foreignRead['overrides']['people.' . $addedKey . '.resourceNo']), 'resourceNo stripped on write');
+    check(($foreignRead['overrides']['people.' . $addedKey . '.name'] ?? '') === 'Test', 'Other override fields kept');
+} finally {
+    overrides_delete_week($addedProject, $addedWeek, $addedYear);
+    overrides_delete_week($addedProject, 42, $addedYear);
+}
+
 $token = pdf_store_export_html('<html><head></head><body>test</body></html>', 'http://127.0.0.1');
 $path = sys_get_temp_dir() . '/horae_export_' . $token . '.html';
 try {

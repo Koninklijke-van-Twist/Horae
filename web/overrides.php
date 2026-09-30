@@ -191,8 +191,8 @@ function overrides_write(array $payload): void
         $payload['createdAt'] = $payload['updatedAt'];
     }
 
-    $payload['overrides'] = array_filter($payload['overrides'] ?? [],
-        fn($key) => !preg_match('/^people\..+\.(bsn|resourceNo)$/D', (string) $key), ARRAY_FILTER_USE_KEY);
+    $overrides = is_array($payload['overrides'] ?? null) ? $payload['overrides'] : [];
+    $payload['overrides'] = overrides_filter_stored_keys($overrides);
     $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     if ($json === false) {
         throw new RuntimeException('Overrides konden niet worden opgeslagen');
@@ -275,10 +275,62 @@ function overrides_reset_for_projects(array $projectNos): array
     return ['cleared' => $cleared, 'files' => $files];
 }
 
+/**
+ * BSN mag alleen als overschrijving op een zelf toegevoegde regel (horae-add-).
+ */
+function overrides_manual_bsn_person_key(string $key): ?string
+{
+    if (preg_match('/^people\.(horae-add-[^.]+)\.bsn$/D', $key, $m)) {
+        return $m[1];
+    }
+    return null;
+}
+
+function overrides_normalize_manual_bsn(?string $value): ?string
+{
+    if ($value === null) {
+        return null;
+    }
+    $value = trim($value);
+    if ($value === '' || strcasecmp($value, 'Onbekend') === 0) {
+        return null;
+    }
+    if (!preg_match('/^[0-9]{9}$/D', $value)) {
+        throw new InvalidArgumentException('BSN moet uit 9 cijfers bestaan.');
+    }
+    return $value;
+}
+
+function overrides_filter_stored_keys(array $overrides): array
+{
+    $filtered = [];
+    foreach ($overrides as $key => $value) {
+        $key = (string) $key;
+        if (preg_match('/^people\..+\.resourceNo$/D', $key)) {
+            continue;
+        }
+        $personKey = overrides_manual_bsn_person_key($key);
+        if (preg_match('/^people\..+\.bsn$/D', $key)) {
+            if ($personKey === null || !overrides_is_added_person_key($personKey, $overrides)) {
+                continue;
+            }
+            $bsn = trim((string) $value);
+            if (!preg_match('/^[0-9]{9}$/D', $bsn)) {
+                continue;
+            }
+            $filtered[$key] = $bsn;
+            continue;
+        }
+        $filtered[$key] = $value;
+    }
+    return $filtered;
+}
+
 function overrides_set_value(string $projectNo, int $weekNo, string $key, ?string $value, int $year = 0): array
 {
     $key = trim($key);
-    if (preg_match('/^people\..+\.(bsn|resourceNo)$/D', $key)) {
+    $manualBsnPerson = overrides_manual_bsn_person_key($key);
+    if (preg_match('/^people\..+\.(bsn|resourceNo)$/D', $key) && $manualBsnPerson === null) {
         throw new InvalidArgumentException('BSN en personeelskoppeling zijn niet bewerkbaar.');
     }
     $payload = overrides_read($projectNo, $weekNo, $year);
@@ -289,6 +341,13 @@ function overrides_set_value(string $projectNo, int $weekNo, string $key, ?strin
 
     if (!isset($payload['overrides']) || !is_array($payload['overrides'])) {
         $payload['overrides'] = [];
+    }
+
+    if ($manualBsnPerson !== null) {
+        if (!overrides_is_added_person_key($manualBsnPerson, $payload['overrides'])) {
+            throw new InvalidArgumentException('BSN is alleen bewerkbaar op zelf toegevoegde regels.');
+        }
+        $value = overrides_normalize_manual_bsn($value);
     }
 
     $key = trim($key);
@@ -377,7 +436,14 @@ function overrides_build_person_from_overrides(string $personKey, array $overrid
             continue;
         }
         $field = substr((string) $key, strlen($prefix));
-        if (in_array($field, ['bsn', 'resourceNo'], true)) {
+        if ($field === 'resourceNo') {
+            continue;
+        }
+        if ($field === 'bsn') {
+            $bsn = trim((string) $value);
+            if (preg_match('/^[0-9]{9}$/D', $bsn)) {
+                $person['bsn'] = $bsn;
+            }
             continue;
         }
         if ($field === '__deleted' || $field === '__added') {
@@ -544,8 +610,14 @@ function overrides_apply_to_report(array &$report, array $overrides): void
 
 function overrides_apply_key(array &$report, string $key, string $value): void
 {
-    if (preg_match('/^people\..+\.(bsn|resourceNo)$/D', $key)) {
-        return;
+    if (preg_match('/^people\.(.+)\.(bsn|resourceNo)$/D', $key, $identity)) {
+        $isManualBsn = $identity[2] === 'bsn'
+            && preg_match('/^horae-add-[^.]+$/D', $identity[1])
+            && preg_match('/^[0-9]{9}$/D', trim($value));
+        if (!$isManualBsn) {
+            return;
+        }
+        $value = trim($value);
     }
     if ($key === 'documentStatus') {
         $report['documentStatus'] = $value;

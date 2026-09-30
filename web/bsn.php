@@ -113,17 +113,27 @@ function bsn_enrich_report(array &$report, ?callable $lookup = null): void
 {
     $nos = [];
     foreach ($report['gridProject']['people'] as &$person) {
+        if (!empty($person['isDeleted'])) {
+            $person['bsn'] = '';
+            continue;
+        }
+        if (!empty($person['isAdded'])) {
+            $manual = trim((string) ($person['bsn'] ?? ''));
+            $person['bsn'] = preg_match('/^[0-9]{9}$/D', $manual) ? $manual : 'Onbekend';
+            continue;
+        }
         $person['bsn'] = '';
-        if (empty($person['isDeleted']) && (string) ($person['resourceNo'] ?? '') !== '') {
+        if ((string) ($person['resourceNo'] ?? '') !== '') {
             $nos[] = (string) $person['resourceNo'];
         }
     }
     unset($person);
     $values = ($lookup ?? 'bsn_lookup')(array_values(array_unique($nos)));
     foreach ($report['gridProject']['people'] as &$person) {
-        if (empty($person['isDeleted'])) {
-            $person['bsn'] = $values[$person['resourceNo'] ?? ''] ?? 'Onbekend';
+        if (!empty($person['isDeleted']) || !empty($person['isAdded'])) {
+            continue;
         }
+        $person['bsn'] = $values[$person['resourceNo'] ?? ''] ?? 'Onbekend';
     }
     unset($person);
 }
