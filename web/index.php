@@ -677,15 +677,29 @@ require __DIR__ . "/logincheck.php";
 
           const rows = Array.isArray(payload.rows) ? payload.rows : [];
           allProjects = allProjects.concat(rows);
-          skip = Number(payload.loaded || (skip + rows.length));
-          if (payload.total !== null && payload.total !== undefined)
+          const loadedFromServer = Number(payload.loaded);
+          if (Number.isFinite(loadedFromServer) && loadedFromServer >= allProjects.length)
           {
-            total = Number(payload.total);
+            skip = loadedFromServer;
+          }
+          else
+          {
+            skip += rows.length;
+          }
+          if (payload.total !== null && payload.total !== undefined && payload.total !== '')
+          {
+            const parsedTotal = Number(payload.total);
+            if (Number.isFinite(parsedTotal))
+            {
+              total = parsedTotal;
+            }
           }
           if (payload.cached_at) projectsCacheMeta.cached_at = Number(payload.cached_at);
           if (payload.expires_at) projectsCacheMeta.expires_at = Number(payload.expires_at);
           if (payload.source) projectsCacheMeta.source = String(payload.source);
-          done = !!payload.done || rows.length === 0;
+          // Nightly-cache antwoordt bij skip=0 met alle slanke rijen en done=true.
+          const covered = total !== null && total > 0 && allProjects.length >= total;
+          done = !!payload.done || covered || rows.length === 0;
           setLoadingProgress(allProjects.length, total, done, false);
         }
 
