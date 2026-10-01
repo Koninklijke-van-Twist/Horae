@@ -25,6 +25,7 @@ try {
     echo 'cached_at=' . date('c', (int) $result['cached_at']) . "\n";
     echo 'expires_at=' . date('c', (int) $result['expires_at']) . "\n";
     echo 'path=' . (string) $result['path'] . "\n";
+    echo 'index=' . (string) ($result['index_path'] ?? '') . "\n";
     echo "includes=servicelocation,contractor,hoursStart,hoursEnd,planningLines\n";
 } catch (Throwable $e) {
     http_response_code(500);

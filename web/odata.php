@@ -2820,16 +2820,30 @@ function projects_nightly_ttl(): int
     return 86400; // 24 uur, of tot volgende nightly-overwrite
 }
 
-function projects_nightly_cache_path(): string
+function projects_nightly_env_slug(): string
 {
-    odata_require_auth();
-    odata_mimir_ensure_globals();
-    $environment = $GLOBALS['environment'] ?? 'default';
-    $env = preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) ($environment ?? 'default'));
-    if ($env === '') {
+    $environment = $GLOBALS['environment'] ?? null;
+    if (!is_string($environment) || trim($environment) === '') {
+        odata_require_auth();
+        odata_mimir_ensure_globals();
+        $environment = $GLOBALS['environment'] ?? 'default';
+    }
+    $env = preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) $environment);
+    if (!is_string($env) || $env === '') {
         $env = 'default';
     }
-    return cache_base_dir() . '/projects_nightly_' . $env . '.json';
+    return $env;
+}
+
+function projects_nightly_cache_path(): string
+{
+    return cache_base_dir() . '/projects_nightly_' . projects_nightly_env_slug() . '.json';
+}
+
+/** Slanke index voor de projectselectie-UI: alleen No + Description, al gesorteerd bij schrijven. */
+function projects_nightly_index_path(): string
+{
+    return cache_base_dir() . '/projects_index_' . projects_nightly_env_slug() . '.json';
 }
 
 /** @return list<array<string,mixed>> */
@@ -2853,6 +2867,34 @@ function projects_normalize_rows(array $rows): array
     }
 
     usort($out, fn($a, $b) => strcmp((string) $a['No'], (string) $b['No']));
+    return $out;
+}
+
+/**
+ * Projectselectie heeft alleen No en Description nodig.
+ * Bewaart de bestaande volgorde (nightly schrijft al gesorteerd) en doet geen usort.
+ *
+ * @param list<array<string,mixed>> $rows
+ * @return list<array{No:string,Description:string}>
+ */
+function projects_slim_rows(array $rows): array
+{
+    $out = [];
+    $seen = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $no = trim((string) ($row['No'] ?? ''));
+        if ($no === '' || isset($seen[$no])) {
+            continue;
+        }
+        $seen[$no] = true;
+        $out[] = [
+            'No' => $no,
+            'Description' => (string) ($row['Description'] ?? ''),
+        ];
+    }
     return $out;
 }
 
@@ -3116,7 +3158,7 @@ function planning_lines_for_project(string $projectNo, string $base = '', array 
 /**
  * Haalt AppProjecten + servicelocatie + Job Planning Lines (Resource) op en schrijft de nightly-cache (24u lokale snapshot).
  * Mímir max_age op deze fetches: HORAE_NIGHTLY_MAX_AGE (14400).
- * @return array{ok:bool,count:int,planningLines:int,path:string,cached_at:int,expires_at:int,source_url:string}
+ * @return array{ok:bool,count:int,planningLines:int,path:string,index_path:string,cached_at:int,expires_at:int,source_url:string}
  */
 function projects_nightly_refresh(string $base, array $auth): array
 {
@@ -3249,11 +3291,18 @@ function projects_nightly_refresh(string $base, array $auth): array
     write_cache_json($path, $rows, $ttl, $sourceUrl);
 
     $now = time();
+    $indexPath = '';
+    if (count($rows) > 0) {
+        $indexPath = projects_nightly_index_path();
+        projects_nightly_index_write(projects_slim_rows($rows), $now, $now + $ttl, $sourceUrl);
+    }
+
     return [
         'ok' => true,
         'count' => count($rows),
         'planningLines' => $planningCount,
         'path' => $path,
+        'index_path' => $indexPath,
         'cached_at' => $now,
         'expires_at' => $now + $ttl,
         'source_url' => $sourceUrl,
@@ -3261,35 +3310,140 @@ function projects_nightly_refresh(string $base, array $auth): array
 }
 
 /**
- * @return array{valid:bool,rows:list<array{No:string,Description:string}>,cached_at:int,expires_at:int}
+ * Vette nightly-snapshot zonder normalize/usort.
+ * PDF en detail blijven via projects_nightly_read() de verrijkte rijen lezen.
+ *
+ * @return array{valid:bool,rows:list<array<string,mixed>>,cached_at:int,expires_at:int,source_url:string}
  */
-function projects_nightly_read(bool $allowExpired = false): array
+function projects_nightly_read_stored(bool $allowExpired = false): array
 {
+    $empty = ['valid' => false, 'rows' => [], 'cached_at' => 0, 'expires_at' => 0, 'source_url' => ''];
     $path = projects_nightly_cache_path();
     if (!is_file($path)) {
-        return ['valid' => false, 'rows' => [], 'cached_at' => 0, 'expires_at' => 0];
+        return $empty;
     }
 
     $raw = @file_get_contents($path);
     if ($raw === false || $raw === '') {
-        return ['valid' => false, 'rows' => [], 'cached_at' => 0, 'expires_at' => 0];
+        return $empty;
     }
 
     $payload = json_decode($raw, true);
     if (!is_array($payload) || !isset($payload['data']) || !is_array($payload['data'])) {
-        return ['valid' => false, 'rows' => [], 'cached_at' => 0, 'expires_at' => 0];
+        return $empty;
+    }
+
+    $meta = is_array($payload['_meta'] ?? null) ? $payload['_meta'] : [];
+    $cachedAt = (int) ($meta['cached_at'] ?? 0);
+    $expiresAt = (int) ($meta['expires_at'] ?? 0);
+    $sourceUrl = (string) ($meta['source_url'] ?? '');
+    $fresh = $expiresAt <= 0 || time() <= $expiresAt;
+    if ((!$fresh && !$allowExpired) || count($payload['data']) === 0) {
+        return [
+            'valid' => false,
+            'rows' => [],
+            'cached_at' => $cachedAt,
+            'expires_at' => $expiresAt,
+            'source_url' => $sourceUrl,
+        ];
+    }
+
+    return [
+        'valid' => true,
+        'rows' => $payload['data'],
+        'cached_at' => $cachedAt,
+        'expires_at' => $expiresAt,
+        'source_url' => $sourceUrl,
+    ];
+}
+
+/**
+ * @return array{valid:bool,rows:list<array<string,mixed>>,cached_at:int,expires_at:int}
+ */
+function projects_nightly_read(bool $allowExpired = false): array
+{
+    $stored = projects_nightly_read_stored($allowExpired);
+    if (!$stored['valid']) {
+        return [
+            'valid' => false,
+            'rows' => [],
+            'cached_at' => $stored['cached_at'],
+            'expires_at' => $stored['expires_at'],
+        ];
+    }
+
+    $rows = projects_normalize_rows($stored['rows']);
+    if (count($rows) === 0) {
+        return [
+            'valid' => false,
+            'rows' => [],
+            'cached_at' => $stored['cached_at'],
+            'expires_at' => $stored['expires_at'],
+        ];
+    }
+
+    return [
+        'valid' => true,
+        'rows' => $rows,
+        'cached_at' => $stored['cached_at'],
+        'expires_at' => $stored['expires_at'],
+    ];
+}
+
+/**
+ * @param list<array{No:string,Description:string}> $slimRows
+ */
+function projects_nightly_index_write(array $slimRows, int $cachedAt, int $expiresAt, string $sourceUrl = ''): void
+{
+    $path = projects_nightly_index_path();
+    $tmp = $path . '.tmp';
+    $payload = [
+        '_meta' => [
+            'cached_at' => $cachedAt,
+            'expires_at' => $expiresAt,
+            'source_url' => $sourceUrl,
+            'kind' => 'projects_index',
+        ],
+        'data' => $slimRows,
+    ];
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        throw new Exception('Failed to encode projects index JSON');
+    }
+    file_put_contents($tmp, $json, LOCK_EX);
+    rename($tmp, $path);
+}
+
+/**
+ * @return array{valid:bool,rows:list<array{No:string,Description:string}>,cached_at:int,expires_at:int}
+ */
+function projects_nightly_index_read(bool $allowExpired = false): array
+{
+    $empty = ['valid' => false, 'rows' => [], 'cached_at' => 0, 'expires_at' => 0];
+    $path = projects_nightly_index_path();
+    if (!is_file($path)) {
+        return $empty;
+    }
+
+    $raw = @file_get_contents($path);
+    if ($raw === false || $raw === '') {
+        return $empty;
+    }
+
+    $payload = json_decode($raw, true);
+    if (!is_array($payload) || !isset($payload['data']) || !is_array($payload['data'])) {
+        return $empty;
     }
 
     $meta = is_array($payload['_meta'] ?? null) ? $payload['_meta'] : [];
     $cachedAt = (int) ($meta['cached_at'] ?? 0);
     $expiresAt = (int) ($meta['expires_at'] ?? 0);
     $fresh = $expiresAt <= 0 || time() <= $expiresAt;
-    $rows = projects_normalize_rows($payload['data']);
-
     if (!$fresh && !$allowExpired) {
         return ['valid' => false, 'rows' => [], 'cached_at' => $cachedAt, 'expires_at' => $expiresAt];
     }
 
+    $rows = projects_slim_rows($payload['data']);
     if (count($rows) === 0) {
         return ['valid' => false, 'rows' => [], 'cached_at' => $cachedAt, 'expires_at' => $expiresAt];
     }
@@ -3300,6 +3454,108 @@ function projects_nightly_read(bool $allowExpired = false): array
         'cached_at' => $cachedAt,
         'expires_at' => $expiresAt,
     ];
+}
+
+/**
+ * Leest de slanke index. Alleen als die ontbreekt of ouder is dan de vette nightly
+ * wordt het 9MB-bestand één keer gedecodeerd (zonder usort) en de index bijgeschreven.
+ *
+ * @return array{valid:bool,rows:list<array{No:string,Description:string}>,cached_at:int,expires_at:int}
+ */
+function projects_nightly_index_load(bool $allowExpired = true): array
+{
+    // Zelfde request kan de index net geschreven hebben (refresh of eerste opbouw).
+    clearstatcache();
+    $indexPath = projects_nightly_index_path();
+    $fatPath = projects_nightly_cache_path();
+    $indexMtime = is_file($indexPath) ? (int) @filemtime($indexPath) : 0;
+    $fatMtime = is_file($fatPath) ? (int) @filemtime($fatPath) : 0;
+    if ($fatMtime === 0 || $indexMtime >= $fatMtime) {
+        $index = projects_nightly_index_read($allowExpired);
+        if ($index['valid']) {
+            return $index;
+        }
+    }
+
+    $stored = projects_nightly_read_stored($allowExpired);
+    if (!$stored['valid']) {
+        return [
+            'valid' => false,
+            'rows' => [],
+            'cached_at' => $stored['cached_at'],
+            'expires_at' => $stored['expires_at'],
+        ];
+    }
+
+    $slim = projects_slim_rows($stored['rows']);
+    if (count($slim) === 0) {
+        return [
+            'valid' => false,
+            'rows' => [],
+            'cached_at' => $stored['cached_at'],
+            'expires_at' => $stored['expires_at'],
+        ];
+    }
+
+    $cachedAt = $stored['cached_at'] > 0 ? $stored['cached_at'] : time();
+    $expiresAt = $stored['expires_at'] > 0 ? $stored['expires_at'] : ($cachedAt + projects_nightly_ttl());
+    projects_nightly_index_write($slim, $cachedAt, $expiresAt, $stored['source_url']);
+
+    return [
+        'valid' => true,
+        'rows' => $slim,
+        'cached_at' => $cachedAt,
+        'expires_at' => $expiresAt,
+    ];
+}
+
+/**
+ * Projectselectie-batch. skip=0 vanuit de nightly-cache levert alle slanke rijen in één keer.
+ *
+ * @return array{ok:bool,rows:list<array{No:string,Description:string}>,skip:int,top:int,loaded:int,total:int,done:bool,cached:bool,source:string,cached_at:int,expires_at:int}
+ */
+function projects_batch_payload(array $index, int $skip, int $top): array
+{
+    $all = projects_slim_rows(is_array($index['rows'] ?? null) ? $index['rows'] : []);
+    $total = count($all);
+    $skip = max(0, $skip);
+
+    // Eén response: de UI batcht anders ~10 keer en elke call decode+usort de vette nightly.
+    if ($skip === 0) {
+        $slice = $all;
+        $loaded = $total;
+        $done = true;
+        $servedTop = $total > 0 ? $total : max(1, $top);
+    } else {
+        $servedTop = max(1, $top);
+        $slice = array_slice($all, $skip, $servedTop);
+        $loaded = $skip + count($slice);
+        $done = $loaded >= $total || count($slice) === 0;
+    }
+
+    return [
+        'ok' => true,
+        'rows' => $slice,
+        'skip' => $skip,
+        'top' => $servedTop,
+        'loaded' => $loaded,
+        'total' => $total,
+        'done' => $done,
+        'cached' => true,
+        'source' => 'nightly',
+        'cached_at' => (int) ($index['cached_at'] ?? 0),
+        'expires_at' => (int) ($index['expires_at'] ?? 0),
+    ];
+}
+
+/**
+ * Zelfde pad als odata.php?action=projects_batch, zonder HTTP-exit.
+ *
+ * @return array{ok:bool,rows:list<array{No:string,Description:string}>,skip:int,top:int,loaded:int,total:int,done:bool,cached:bool,source:string,cached_at:int,expires_at:int}
+ */
+function projects_batch_response(int $skip, int $top): array
+{
+    return projects_batch_payload(projects_nightly_index_load(true), $skip, $top);
 }
 
 /** @return list<array{No:string,Description:string}> */
@@ -3353,34 +3609,21 @@ function odata_send_projects_batch_json(): void
     $top = max(1, min(2000, (int) ($_GET['top'] ?? 500)));
 
     try {
-        $nightly = projects_nightly_read(true);
+        $index = projects_nightly_index_load(true);
 
-        if (!$nightly['valid'] || count($nightly['rows']) === 0) {
+        if (!$index['valid'] || count($index['rows']) === 0) {
             // Eerste keer / lege cache: eenmalig vullen (zelfde als nightly)
             if (!is_string($base) || $base === '' || !is_array($auth)) {
                 throw new RuntimeException('BC-auth/base ontbreekt voor projectcache-refresh');
             }
             projects_nightly_refresh($base, $auth);
-            $nightly = projects_nightly_read(true);
+            $index = projects_nightly_index_load(true);
         }
 
-        $all = $nightly['rows'];
-        $slice = array_slice($all, $skip, $top);
-        $loaded = $skip + count($slice);
-
-        echo json_encode([
-            'ok' => true,
-            'rows' => $slice,
-            'skip' => $skip,
-            'top' => $top,
-            'loaded' => $loaded,
-            'total' => count($all),
-            'done' => $loaded >= count($all),
-            'cached' => true,
-            'source' => 'nightly',
-            'cached_at' => $nightly['cached_at'],
-            'expires_at' => $nightly['expires_at'],
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        echo json_encode(
+            projects_batch_payload($index, $skip, $top),
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
     } catch (Throwable $e) {
         http_response_code(500);
         echo json_encode([
