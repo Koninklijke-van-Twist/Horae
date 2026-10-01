@@ -413,11 +413,16 @@ require __DIR__ . "/logincheck.php";
       let html = '';
       if (rows.length === 0)
       {
-        html += '<div class="hint">Geen project in Business Central gevonden voor "' + escapeHtml(q) + '".</div>';
-        html += '<div class="manual-add">'
-          + '<div class="hint">Staat het project wél in BC onder een ander nummer? Probeer exact dat nummer. Anders kun je het projectnummer handmatig kiezen voor een Horae-week.</div>'
-          + '<button class="btn" type="button" onclick="addManualProject()">Project "' + escapeHtml(q) + '" toevoegen</button>'
-          + '</div>';
+        const manualNos = projectNosFromInput(q);
+        const manualLabel = manualNos.join(', ');
+        html += '<div class="hint">Geen project in Business Central gevonden voor "' + escapeHtml(manualLabel || q) + '".</div>';
+        if (manualLabel !== '')
+        {
+          html += '<div class="manual-add">'
+            + '<div class="hint">Staat het project wél in BC onder een ander nummer? Probeer exact dat nummer. Anders kun je het projectnummer handmatig kiezen voor een Horae-week.</div>'
+            + '<button class="btn" type="button" onclick="addManualProject()">Project "' + escapeHtml(manualLabel) + '" toevoegen</button>'
+            + '</div>';
+        }
       }
       else
       {
@@ -437,42 +442,97 @@ require __DIR__ . "/logincheck.php";
       renderProjectList();
     }
 
+    function isProjectNo (value)
+    {
+      if (!value || value.length > 20 || /[\t\r\n]/.test(value)) return false;
+      if (!/^[A-Za-z][A-Za-z0-9._\-\/]*$/.test(value)) return false;
+      return /\d/.test(value);
+    }
+
+    function projectNosFromInput (raw)
+    {
+      const text = String(raw || '').trim();
+      if (text === '') return [];
+      if (isProjectNo(text)) return [text];
+      const blob = /[\t\r\n|]/.test(text);
+      if (!blob && !/\s/.test(text)) return [];
+      const headers = new Set([
+        'nr', 'no', 'omschrijving', 'description', 'status', 'project',
+        'projectnr', 'projectnummer', 'naam', 'name', 'klant', 'customer',
+        'taak', 'regel', 'soort', 'type', 'bedrag', 'aantal'
+      ]);
+      const out = [];
+      const seen = new Set();
+      for (const token of text.split(/[\s,;|—–]+/))
+      {
+        const cleaned = token.replace(/^["'`]+|["'`]+$/g, '');
+        const key = cleaned.toLowerCase().replace(/\.+$/, '');
+        if (!cleaned || headers.has(key) || !isProjectNo(cleaned) || seen.has(cleaned)) continue;
+        seen.add(cleaned);
+        out.push(cleaned);
+      }
+      return out;
+    }
+
     function addManualProject (value)
     {
-      const no = String(value ?? document.getElementById('projectSearch').value ?? '').trim();
-      if (no === '')
+      const raw = String(value ?? document.getElementById('projectSearch').value ?? '').trim();
+      const nos = projectNosFromInput(raw);
+      if (nos.length === 0)
       {
-        alert('Voer eerst een projectnummer in.');
+        alert('Voer een projectnummer in (maximaal 20 tekens). Een geplakte tabelrij wordt niet als nummer gebruikt.');
         return;
       }
-      manualProjects[no] = { No: no, Description: '', manual: true };
-      checkedProjects.add(no);
       serverSearchResults = serverSearchResults || [];
-      if (!serverSearchResults.some(p => String(p.No || '') === no))
+      for (const no of nos)
       {
-        serverSearchResults.unshift(manualProjects[no]);
+        manualProjects[no] = { No: no, Description: '', manual: true };
+        checkedProjects.add(no);
+        if (!serverSearchResults.some(p => String(p.No || '') === no))
+        {
+          serverSearchResults.unshift(manualProjects[no]);
+        }
       }
       renderProjectList();
     }
 
+    async function fetchProjectSearch (part)
+    {
+      const response = await fetch('odata.php?action=projects_search&q=' + encodeURIComponent(part), {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin',
+        cache: 'no-store'
+      });
+      const raw = await response.text();
+      const payload = JSON.parse(raw);
+      if (!response.ok || !payload.ok)
+      {
+        throw new Error((payload && payload.error) || 'Zoeken mislukt');
+      }
+      return Array.isArray(payload.rows) ? payload.rows : [];
+    }
+
     async function runServerProjectSearch (query)
     {
+      const parts = /[\t\r\n|]/.test(query) ? projectNosFromInput(query) : [query];
       serverSearchLoading = true;
       serverSearchQuery = query;
       renderProjectList();
 
       try
       {
-        const response = await fetch('odata.php?action=projects_search&q=' + encodeURIComponent(query), {
-          headers: { 'Accept': 'application/json' },
-          credentials: 'same-origin',
-          cache: 'no-store'
-        });
-        const raw = await response.text();
-        const payload = JSON.parse(raw);
-        if (!response.ok || !payload.ok)
+        const merged = [];
+        const seen = new Set();
+        for (const part of parts)
         {
-          throw new Error((payload && payload.error) || 'Zoeken mislukt');
+          if (!part) continue;
+          for (const row of await fetchProjectSearch(part))
+          {
+            const no = String(row.No || '');
+            if (no !== '' && seen.has(no)) continue;
+            if (no !== '') seen.add(no);
+            merged.push(row);
+          }
         }
 
         if ((document.getElementById('projectSearch').value || '').trim() !== query)
@@ -480,7 +540,7 @@ require __DIR__ . "/logincheck.php";
           return;
         }
 
-        serverSearchResults = Array.isArray(payload.rows) ? payload.rows : [];
+        serverSearchResults = merged;
       }
       catch (error)
       {

@@ -2746,67 +2746,137 @@ function projects_query_job_card(string $base, array $auth, string $filter, int 
     return $rows;
 }
 
-/** Zoek projecten in BC AppProjecten — ook zonder urenstaten/weken. */
-function projects_search_rows(string $base, array $auth, string $query): array
+/**
+ * BC Code-veld No is maximaal 20 tekens. Tabs of een geplakte tabelrij zijn geen projectnummer.
+ */
+function projects_is_project_no(string $value): bool
+{
+    if ($value === '' || strlen($value) > 20) {
+        return false;
+    }
+    if (preg_match('/[\t\r\n]/', $value) === 1) {
+        return false;
+    }
+    if (preg_match('/^[A-Za-z][A-Za-z0-9._\-\/]*$/', $value) !== 1) {
+        return false;
+    }
+
+    return preg_match('/\d/', $value) === 1;
+}
+
+function projects_is_header_token(string $token): bool
+{
+    $key = strtolower(rtrim(trim($token), '.'));
+    static $headers = [
+        'nr', 'no', 'omschrijving', 'description', 'status', 'project',
+        'projectnr', 'projectnummer', 'naam', 'name', 'klant', 'customer',
+        'taak', 'regel', 'soort', 'type', 'bedrag', 'aantal', 'vestiging',
+        'werksoort', 'line', 'linetype',
+    ];
+
+    return in_array($key, $headers, true);
+}
+
+/** Geplakte TSV, tabelrij of selectie (tabs, regeleinden of kolomscheiding). */
+function projects_input_is_blob(string $raw): bool
+{
+    if (preg_match('/[\t\r\n]/', $raw) === 1) {
+        return true;
+    }
+
+    return str_contains($raw, '|');
+}
+
+/**
+ * Haal echte projectnummers uit een zoekveld of een geplakte BC/Excel-selectie.
+ * Koppen zoals Nr. en Omschrijving vallen af; PRJ… blijft.
+ *
+ * @return list<string>
+ */
+function projects_nos_from_user_input(string $raw): array
+{
+    $raw = trim($raw);
+    if ($raw === '') {
+        return [];
+    }
+    if (projects_is_project_no($raw)) {
+        return [$raw];
+    }
+    if (!projects_input_is_blob($raw) && !str_contains($raw, ' ')) {
+        return [];
+    }
+
+    $normalized = str_replace(["\r\n", "\r", "\xC2\xA0"], ["\n", "\n", ' '], $raw);
+    $tokens = preg_split('/[\s,;|—–]+/u', $normalized) ?: [];
+    $out = [];
+    foreach ($tokens as $token) {
+        $token = trim((string) $token, " \t\n\r\0\x0B\"'`");
+        if ($token === '' || projects_is_header_token($token) || !projects_is_project_no($token)) {
+            continue;
+        }
+        $out[$token] = $token;
+    }
+
+    return array_values($out);
+}
+
+/**
+ * OData-filters die projects_search_rows naar BC stuurt.
+ * No krijgt nooit de ruwe plak (tabs, >20 tekens, koprij).
+ *
+ * @return list<array{entity:string,filter:string,top:int}>
+ */
+function projects_search_plan(string $query): array
 {
     $query = trim($query);
     if ($query === '') {
         return [];
     }
 
+    $plan = [];
+    $nos = projects_nos_from_user_input($query);
+    $blob = projects_input_is_blob($query);
+
+    foreach ($nos as $no) {
+        $variants = array_values(array_unique([$no, strtoupper($no), strtolower($no)]));
+        foreach ($variants as $variant) {
+            if (!projects_is_project_no($variant)) {
+                continue;
+            }
+            $escaped = projects_odata_escape($variant);
+            $plan[] = ['entity' => 'AppProjecten', 'filter' => "No eq '{$escaped}'", 'top' => 1];
+            $plan[] = ['entity' => 'JobCard', 'filter' => "No eq '{$escaped}'", 'top' => 1];
+        }
+        if (!$blob && $no === $query) {
+            $escaped = projects_odata_escape($no);
+            $plan[] = ['entity' => 'AppProjecten', 'filter' => "startswith(No,'{$escaped}')", 'top' => 100];
+            $plan[] = ['entity' => 'JobCard', 'filter' => "startswith(No,'{$escaped}')", 'top' => 25];
+        }
+    }
+
+    if (!$blob && strlen($query) <= 100 && preg_match('/[\t\r\n]/', $query) !== 1) {
+        $escaped = projects_odata_escape($query);
+        $plan[] = ['entity' => 'AppProjecten', 'filter' => "startswith(Description,'{$escaped}')", 'top' => 100];
+        $plan[] = ['entity' => 'AppProjecten', 'filter' => "contains(Description,'{$escaped}')", 'top' => 100];
+    }
+
+    return $plan;
+}
+
+/** Zoek projecten in BC AppProjecten — ook zonder urenstaten/weken. */
+function projects_search_rows(string $base, array $auth, string $query): array
+{
     $rows = [];
-    $escaped = projects_odata_escape($query);
-    $attempts = array_values(array_unique(array_filter([
-        $query,
-        strtoupper($query),
-        $query !== strtoupper($query) ? strtolower($query) : '',
-    ], fn($v) => $v !== '')));
-
-    foreach ($attempts as $candidate) {
+    foreach (projects_search_plan($query) as $step) {
         try {
-            $exact = projects_odata_escape($candidate);
-            $found = projects_query_app_projecten($base, $auth, "No eq '{$exact}'", 1);
+            if ($step['entity'] === 'JobCard') {
+                $found = projects_query_job_card($base, $auth, $step['filter'], $step['top']);
+            } else {
+                $found = projects_query_app_projecten($base, $auth, $step['filter'], $step['top']);
+            }
             $rows = projects_merge_rows($rows, $found);
         } catch (Throwable $e) {
-            // volgende poging
-        }
-    }
-
-    try {
-        $found = projects_query_app_projecten(
-            $base,
-            $auth,
-            "startswith(No,'{$escaped}') or startswith(Description,'{$escaped}')",
-            100
-        );
-        $rows = projects_merge_rows($rows, $found);
-    } catch (Throwable $e) {
-        // startswith kan ontbreken op oudere BC; negeren
-    }
-
-    try {
-        $found = projects_query_app_projecten($base, $auth, "contains(Description,'{$escaped}')", 100);
-        $rows = projects_merge_rows($rows, $found);
-    } catch (Throwable $e) {
-        // contains op Description optioneel
-    }
-
-    foreach ($attempts as $candidate) {
-        try {
-            $exact = projects_odata_escape($candidate);
-            $found = projects_query_job_card($base, $auth, "No eq '{$exact}'", 1);
-            $rows = projects_merge_rows($rows, $found);
-        } catch (Throwable $e) {
-            // volgende poging
-        }
-    }
-
-    if (count($rows) === 0) {
-        try {
-            $found = projects_query_job_card($base, $auth, "startswith(No,'{$escaped}')", 25);
-            $rows = projects_merge_rows($rows, $found);
-        } catch (Throwable $e) {
-            // negeren
+            // volgende filter
         }
     }
 
@@ -3079,7 +3149,7 @@ function planning_lines_nightly_read(bool $allowExpired = false): array
 function planning_lines_for_project(string $projectNo, string $base = '', array $auth = []): array
 {
     $projectNo = trim($projectNo);
-    if ($projectNo === '') {
+    if ($projectNo === '' || !projects_is_project_no($projectNo)) {
         return [];
     }
 

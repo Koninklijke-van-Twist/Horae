@@ -21,7 +21,7 @@ function overrides_base_dir(): string
 function overrides_sanitize_project_no(string $projectNo): string
 {
     $projectNo = trim($projectNo);
-    if ($projectNo === '' || !preg_match('/^[A-Za-z0-9._\-\/]+$/', $projectNo)) {
+    if ($projectNo === '' || strlen($projectNo) > 20 || !preg_match('/^[A-Za-z0-9._\-\/]+$/', $projectNo)) {
         throw new InvalidArgumentException('Ongeldig projectnummer');
     }
     return $projectNo;

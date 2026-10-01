@@ -215,7 +215,19 @@ function pdf_project_meta_from_cache(string $projectNo, string $baseApp, array $
         ];
     }
 
-    // Fallback live BC als nightly-cache het project mist
+    // Fallback live BC als nightly-cache het project mist.
+    // Alleen een echt projectnummer (≤20, geen geplakte tabelrij) gaat naar AppProjecten.No.
+    if (!projects_is_project_no($projectNo)) {
+        return [
+            'project' => ['No' => '', 'Description' => ''],
+            'contractor' => ['Naam' => '', 'Adres' => '', 'Postcode' => '', 'Woonplaats' => ''],
+            'serviceLocation' => ['No' => '', 'Naam' => '', 'Adres' => '', 'Postcode' => '', 'Woonplaats' => ''],
+            'projectDisplay' => ['Opdrachtnummer' => '', 'Project' => '', 'Postcode' => '', 'Woonplaats' => ''],
+            'hoursStart' => null,
+            'hoursEnd' => null,
+        ];
+    }
+
     $projFilter = rawurlencode("No eq '" . str_replace("'", "''", $projectNo) . "'");
     $projUrl = $baseApp . "AppProjecten?\$select=No,Your_Reference,LVS_Bill_to_Name,Description,LVS_Main_Entity,LVS_Main_Entity_Description,LVS_Job_Location&\$filter={$projFilter}&\$format=json";
     $project = (odata_get_all($projUrl, $auth)[0] ?? ['No' => $projectNo, 'Description' => '']);
@@ -781,7 +793,13 @@ function pdf_load_reports(string $baseApp, array $auth, array $query): array
     if (!is_array($projectNos)) {
         $projectNos = [$projectNos];
     }
-    $projectNos = array_values(array_filter(array_map('trim', $projectNos), fn($x) => $x !== ''));
+    $expandedProjectNos = [];
+    foreach ($projectNos as $projectNo) {
+        foreach (projects_nos_from_user_input((string) $projectNo) as $no) {
+            $expandedProjectNos[$no] = $no;
+        }
+    }
+    $projectNos = array_values($expandedProjectNos);
 
     if (count($projectNos) === 0) {
         throw new InvalidArgumentException('Geen project geselecteerd');
