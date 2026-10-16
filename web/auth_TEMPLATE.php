@@ -47,6 +47,11 @@ $allowedUsers = [
     // "user@domain.nl",
 ];
 
+// Optioneel, alleen als een HTTP-runner odata.php?action=… moet aanroepen
+// (nightly of hourly). Header X-Horae-Secret moet exact dit geheim zijn.
+// Weglaten: geen anonieme toegang. CLI (php web/nightly.php) heeft dit niet nodig.
+// $horaeRunnerSecret = '';
+
 // SharePoint / Microsoft Graph: vul deze waarden alleen in auth.php in.
 $bsnGraph = [
     'TENANT_ID' => '',

@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/kvt_protect_dirs.php';
 function dow_nl_index(string $dateYmd): int
 {
     // 0=Ma,1=Di,...6=Zo

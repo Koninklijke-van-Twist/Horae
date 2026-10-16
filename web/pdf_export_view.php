@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/kvt_protect_dirs.php';
 
 require __DIR__ . '/pdf_common.php';
 bsn_private_headers();

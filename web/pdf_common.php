@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/kvt_protect_dirs.php';
 
 require __DIR__ . '/odata.php';
 require __DIR__ . '/grid.php';

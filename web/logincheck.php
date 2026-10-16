@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/kvt_protect_dirs.php';
 
 function is_trusted_requester(): bool
 {
@@ -17,7 +18,9 @@ function is_trusted_requester(): bool
 if (!is_trusted_requester()) {
     require __DIR__ . "/../login/lib.php";
 
+    // Ontbreekt $allowedUsers of is die leeg: elke ingelogde gebruiker mag erin.
     if (
+        !empty($allowedUsers) && is_array($allowedUsers) &&
         !array_any($allowedUsers, function ($email) {
             return strtolower((string) $email) === strtolower((string) ($_SESSION['user']['email'] ?? ''));
         })

@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/kvt_protect_dirs.php';
 require_once __DIR__ . '/bsn.php';
 bsn_private_headers();
 require __DIR__ . '/auth.php';
