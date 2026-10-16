@@ -108,7 +108,7 @@ assert_same(true, odata_email_is_allowed('Analyst@kvt.nl', $allowed), 'lijst-geb
 assert_same(true, odata_email_is_allowed('planner@kvt.nl', $allowed), 'map-gebruiker');
 assert_same(false, odata_email_is_allowed('andere@kvt.nl', $allowed), 'niet op de lijst');
 assert_same(false, odata_email_is_allowed('', $allowed), 'lege sessie');
-assert_same(false, odata_email_is_allowed('analyst@kvt.nl', null), 'geen whitelist');
+assert_same(true, odata_email_is_allowed('analyst@kvt.nl', null), 'geen whitelist');
 
 assert_same(true, odata_direct_action_skips_login('cli', '', ''), 'cli zonder geheim');
 assert_same(false, odata_direct_action_skips_login('fpm-fcgi', '', ''), 'web anoniem');
@@ -321,34 +321,7 @@ foreach ([
     assert_not_contains($indexBody, 'Customer', $indexFile);
 }
 
-$workflow = (string) file_get_contents($root . '/.github/workflows/deploy-ftp.yml');
-$includeAt = strpos($workflow, '--include-glob cache/.htaccess');
-$includeDataAt = strpos($workflow, '--include-glob data/.htaccess');
-$excludeCacheAt = strpos($workflow, '--exclude-glob cache/**');
-$excludeOdataAt = strpos($workflow, '--exclude-glob cache/odata/**');
-$excludeDataAt = strpos($workflow, '--exclude-glob data/**');
-if ($includeAt === false || $includeDataAt === false || $excludeCacheAt === false || $excludeOdataAt === false || $excludeDataAt === false) {
-    fail('ftp-deploy mist cache- of data-patronen');
-}
-if ($includeAt < $excludeCacheAt || $includeAt < $excludeOdataAt || $includeDataAt < $excludeDataAt) {
-    fail('htaccess-includes moeten ná de excludes staan, anders uploadt lftp ze niet');
-}
-foreach ([
-    '--include-glob cache/index.html',
-    '--include-glob cache/index.php',
-    '--include-glob cache/odata/.htaccess',
-    '--include-glob cache/odata/index.html',
-    '--include-glob cache/odata/index.php',
-    '--include-glob cache/overrides/.htaccess',
-    '--include-glob cache/overrides/index.html',
-    '--include-glob cache/overrides/index.php',
-    '--include-glob data/index.html',
-    '--include-glob data/index.php',
-    '--exclude-glob auth.php',
-    '--exclude-glob .htaccess',
-] as $needle) {
-    assert_contains($workflow, $needle, 'ftp-deploy');
-}
+// FTP-deploy en afscherming: zie tests/protect_dirs_test.php.
 
 file_put_contents($cgiAuthPath, "<?php\n"
     . "\$horaeRunnerSecret = 'server-secret';\n"

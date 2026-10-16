@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/kvt_protect_dirs.php';
 /**
  * Nightly job: haalt AppProjecten + servicelocatie + Job Planning Lines (Resource) op en schrijft 24u-cache.
  * Wordt via GET aangeroepen door het bestaande nightly-script (geen UI).

@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/kvt_protect_dirs.php';
 /**
  * Weekselectie is vervallen: uren komen uit Job Planning Lines.
  * Oude links met projectNo[] worden doorgestuurd naar het rapport.

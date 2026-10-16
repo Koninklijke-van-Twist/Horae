@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/kvt_protect_dirs.php';
 require __DIR__ . "/odata.php"; // jouw curl helper (basic/ntlm)
 require __DIR__ . "/auth.php";
 require __DIR__ . "/logincheck.php";

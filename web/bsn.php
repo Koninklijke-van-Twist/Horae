@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/kvt_protect_dirs.php';
 
 // Deliberately separate from odata.php: no disk/session cache or response logging.
 function bsn_private_headers(): void
