@@ -29,4 +29,11 @@ check('Holwerda, D.', $p['people'][0]['name'], 'grid toont alleen voorletters');
 $tpl = file_get_contents(dirname(__DIR__) . '/web/templates/timesheet.php');
 check(1, preg_match("/\\\$name = horae_display_name\\(/", $tpl), 'template gebruikt horae_display_name');
 
+$uom = fn(string $wt, string $u, float $q) => $line($wt, $q) + ['Unit_of_Measure_Code' => $u];
+$grid = build_grid_from_planning_lines([$uom('', 'KM', 62.0), $uom('', ' km ', 3.0), $uom('SNT', 'HR', 5.0)], [], [], ['P1']);
+check(5.0, $grid['projects']['P1']['totals']['all'], 'UoM KM met lege werksoort telt niet mee');
+
+$grid = build_grid_from_planning_lines([$uom('KM', 'KM', 62.0), $uom('SOT125', 'HR', 0.71667), $uom('SNT', 'HR', 5.0)], [], [], ['P1']);
+check(5.72, round($grid['projects']['P1']['people'][0]['total'], 2), 'Holwerda 12-10: 5,72 uur');
+
 echo "OK display_name_km_test\n";

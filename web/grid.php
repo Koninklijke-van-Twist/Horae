@@ -25,10 +25,11 @@ function horae_display_name(string $name): string
     return $initials === '' ? $last : $last . ', ' . $initials;
 }
 
-/** KM-regels (Work_Type_Code = KM) tellen niet mee als uren. */
+/** KM-regels (Work_Type_Code of Unit_of_Measure_Code = KM) tellen niet mee als uren. */
 function horae_is_km_line(array $line): bool
 {
-    return strcasecmp(trim((string) ($line['Work_Type_Code'] ?? '')), 'KM') === 0;
+    return strcasecmp(trim((string) ($line['Work_Type_Code'] ?? '')), 'KM') === 0
+        || strcasecmp(trim((string) ($line['Unit_of_Measure_Code'] ?? '')), 'KM') === 0;
 }
 function dow_nl_index(string $dateYmd): int
 {
