@@ -3162,7 +3162,7 @@ function planning_lines_nightly_cache_path(): string
     if ($env === '') {
         $env = 'default';
     }
-    return cache_base_dir() . '/planning_lines_nightly_v2_' . $env . '.json';
+    return cache_base_dir() . '/planning_lines_nightly_v3_' . $env . '.json';
 }
 
 /**
@@ -3189,6 +3189,7 @@ function planning_line_normalize_row(array $row): ?array
         'Quantity' => $qty,
         'Amount' => $qty,
         'Work_Type_Code' => (string) ($row['Work_Type_Code'] ?? ''),
+        'Unit_of_Measure_Code' => (string) ($row['Unit_of_Measure_Code'] ?? ''),
     ];
 }
 
@@ -3222,7 +3223,7 @@ function planning_lines_nightly_fetch(string $base, array $auth, array $jobNos =
 
     // Geen projectlijst: één gefilterde query (met paginatie + time-limit reset)
     if (count($jobNos) === 0) {
-        $sourceUrl = $base . "Job_Planning_Lines?\$select=Job_No,Job_Task_No,Line_No,Type,No,Description,Planning_Date,Quantity,Work_Type_Code&\$filter="
+        $sourceUrl = $base . "Job_Planning_Lines?\$select=Job_No,Job_Task_No,Line_No,Type,No,Description,Planning_Date,Quantity,Work_Type_Code,Unit_of_Measure_Code&\$filter="
             . rawurlencode("Type eq 'Resource'")
             . "&\$format=json";
         $hashPath = cache_path_for_key(build_cache_key($sourceUrl, $auth));
@@ -3245,7 +3246,7 @@ function planning_lines_nightly_fetch(string $base, array $auth, array $jobNos =
             $batch
         ));
         $filter = '(' . $jobFilter . ") and Type eq 'Resource'";
-        $url = $base . "Job_Planning_Lines?\$select=Job_No,Job_Task_No,Line_No,Type,No,Description,Planning_Date,Quantity,Work_Type_Code&\$filter="
+        $url = $base . "Job_Planning_Lines?\$select=Job_No,Job_Task_No,Line_No,Type,No,Description,Planning_Date,Quantity,Work_Type_Code,Unit_of_Measure_Code&\$filter="
             . rawurlencode($filter)
             . "&\$format=json";
         $hashPath = cache_path_for_key(build_cache_key($url, $auth));
@@ -3322,7 +3323,7 @@ function planning_lines_for_project(string $projectNo, string $base = '', array 
     }
 
     $filter = rawurlencode("Job_No eq '" . str_replace("'", "''", $projectNo) . "' and Type eq 'Resource'");
-    $url = $base . "Job_Planning_Lines?\$select=Job_No,Job_Task_No,Line_No,Type,No,Description,Planning_Date,Quantity,Work_Type_Code&\$filter={$filter}&\$format=json";
+    $url = $base . "Job_Planning_Lines?\$select=Job_No,Job_Task_No,Line_No,Type,No,Description,Planning_Date,Quantity,Work_Type_Code,Unit_of_Measure_Code&\$filter={$filter}&\$format=json";
     $rows = [];
     try {
         foreach (odata_get_all($url, $auth, 60) as $row) {
