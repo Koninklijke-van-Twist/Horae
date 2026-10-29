@@ -18,8 +18,9 @@ function horae_display_name(string $name): string
         if (count($parts) === 1) {
             return $name;
         }
-        if (preg_match('/^(\p{L}\.)+$/u', end($parts))) {
-            return implode(' ', array_slice($parts, 0, -1)) . ', ' . mb_strtoupper(end($parts));
+        $ini = preg_grep('/^(\p{L}\.)+$/u', $parts);
+        if ($ini) {
+            return implode(' ', array_diff_key($parts, $ini)) . ', ' . mb_strtoupper(implode('', $ini));
         }
         $tv = ['van', 'de', 'der', 'den', 'het', "'t", 'ter', 'te', 'ten', 'in', 'op', 'la', 'le', 'du', 'di', 'da', 'von', 'vd', 'v.d.'];
         $i = count($parts) - 1;
