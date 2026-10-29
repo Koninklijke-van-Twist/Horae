@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/kvt_protect_dirs.php';
+require_once __DIR__ . '/entra.php';
 
 /**
  * Privacy: op het register nooit de volledige naam, alleen "Achternaam, V.L.".
@@ -52,7 +53,11 @@ function horae_resource_is_person(string $resourceNo, array $res): bool
 function horae_resource_name(string $resourceNo, array $res): string
 {
     $name = trim((string) ($res['Name'] ?? '')) ?: $resourceNo;
-    return horae_resource_is_person($resourceNo, $res) ? horae_display_name($name) : $name;
+    if (!horae_resource_is_person($resourceNo, $res)) {
+        return $name;
+    }
+    $entra = horae_entra_lookup($res);
+    return horae_display_name($entra ? $entra['surname'] . ', ' . $entra['givenName'] : $name);
 }
 
 /** KM-regels (Work_Type_Code of Unit_of_Measure_Code = KM) tellen niet mee als uren. */
