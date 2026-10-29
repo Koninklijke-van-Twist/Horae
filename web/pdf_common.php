@@ -119,7 +119,7 @@ function pdf_load_resources_for_lines(array $lines, string $baseApp, array $auth
 
     $parts = array_map(fn($n) => "No eq '" . str_replace("'", "''", $n) . "'", $neededNos);
     $resFilter = rawurlencode(implode(' or ', $parts));
-    $resUrl = $baseApp . "AppResource?\$select=No,Name,Resource_Group_No&\$filter={$resFilter}&\$format=json";
+    $resUrl = $baseApp . "AppResource?\$select=No,Name,Resource_Group_No,E_Mail,KVT_User_ID&\$filter={$resFilter}&\$format=json";
     $resRows = odata_get_all($resUrl, $auth);
 
     foreach ($resRows as $r) {

@@ -52,6 +52,9 @@ $allowedUsers = [
 // Weglaten: geen anonieme toegang. CLI (php web/nightly.php) heeft dit niet nodig.
 // $horaeRunnerSecret = '';
 
+// Namen uit Entra (Graph, Application-permissie User.Read.All); valt terug op $bsnGraph.
+$nameGraph = ['tenantId' => '', 'clientId' => '', 'clientSecret' => ''];
+
 // SharePoint / Microsoft Graph: vul deze waarden alleen in auth.php in.
 $bsnGraph = [
     'TENANT_ID' => '',
