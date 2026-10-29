@@ -11,8 +11,13 @@ function horae_display_name(string $name): string
     if ($name === '') {
         return '';
     }
+    $tv = ['van', 'de', 'der', 'den', 'het', "'t", 'ter', 'te', 'ten', 'in', 'op', 'la', 'le', 'du', 'di', 'da', 'von', 'vd', 'v.d.'];
     if (strpos($name, ',') !== false) {
         [$last, $first] = array_map('trim', explode(',', $name, 2));
+        $firstParts = explode(' ', $first);
+        $prefix = array_filter($firstParts, fn($p) => in_array(mb_strtolower($p), $tv, true));
+        $last = trim($last . ' ' . implode(' ', $prefix));
+        $first = implode(' ', array_diff_key($firstParts, $prefix));
     } else {
         $parts = explode(' ', $name);
         if (count($parts) === 1) {
@@ -22,7 +27,6 @@ function horae_display_name(string $name): string
         if ($ini) {
             return implode(' ', array_diff_key($parts, $ini)) . ', ' . mb_strtoupper(implode('', $ini));
         }
-        $tv = ['van', 'de', 'der', 'den', 'het', "'t", 'ter', 'te', 'ten', 'in', 'op', 'la', 'le', 'du', 'di', 'da', 'von', 'vd', 'v.d.'];
         $i = count($parts) - 1;
         foreach (array_slice($parts, 1, -1, true) as $k => $part) {
             if (in_array(mb_strtolower($part), $tv, true)) {
@@ -104,11 +108,7 @@ function build_grid_from_planning_lines(array $lines, array $resourcesByNo, arra
         $res = $resourcesByNo[$resourceNo] ?? [];
         $emp = $employeesByNo[$resourceNo] ?? [];
         $bsn = '';
-        $name = trim((string) ($line['Description'] ?? ''));
-        if ($name === '') {
-            $name = (string) ($res['Name'] ?? $resourceNo);
-        }
-        $name = horae_display_name($name);
+        $name = horae_display_name(trim((string) ($res['Name'] ?? '')) ?: $resourceNo);
 
         if (!isset($dayTotals[$projectNo])) {
             $dayTotals[$projectNo] = array_fill(0, 7, 0.0);
