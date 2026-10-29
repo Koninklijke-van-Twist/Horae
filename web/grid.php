@@ -15,8 +15,14 @@ function horae_display_name(string $name): string
         [$last, $first] = array_map('trim', explode(',', $name, 2));
     } else {
         $parts = explode(' ', $name);
-        $last = (string) array_pop($parts);
-        $first = implode(' ', $parts);
+        if (count($parts) === 1) {
+            return $name;
+        }
+        if (preg_match('/^(\p{L}\.)+$/u', end($parts))) {
+            return implode(' ', array_slice($parts, 0, -1)) . ', ' . mb_strtoupper(end($parts));
+        }
+        $first = array_shift($parts);
+        $last = implode(' ', $parts);
     }
     $initials = '';
     foreach (preg_split('/[\s.\-]+/u', $first, -1, PREG_SPLIT_NO_EMPTY) as $part) {
