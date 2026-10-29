@@ -43,6 +43,8 @@ assert_same(
 assert_same(['PRJ2602980'], projects_nos_from_user_input('PRJ2602980'), 'los projectnummer blijft intact');
 assert_same([], projects_nos_from_user_input('Omschrijving'), 'kopwoord is geen projectnummer');
 assert_true(!projects_is_project_no($tsv), 'de plak zelf is geen projectnummer');
+assert_same(['164397', '159927'], projects_nos_from_user_input('164397 159927'), 'numerieke projectnummers blijven geldig');
+assert_true(projects_is_project_no('164397'), 'numeriek projectnummer 164397');
 assert_true(strlen('PRJ2602980') <= 20, 'voorbeeldnummer past in BC Code 20');
 
 $plan = projects_search_plan($tsv);

@@ -21,6 +21,8 @@ check('van Dijk, J.P.', horae_display_name('Jan Piet van Dijk'), 'voornamen tuss
 check('Holwerda, D.H.K.', horae_display_name('Dirk Hendrik Klaas Holwerda'), 'voornamen achternaam');
 check('Noordermeer, J.C.', horae_display_name('Noordermeer J.C.'), 'BC 1606 achternaam initialen');
 check('Prenter de, R.A.M.', horae_display_name('Prenter de R.A.M.'), 'BC 1664 achternaam tussenvoegsel initialen');
+check('Herk van, H.', horae_display_name('Herk H. van'), 'initialen in het midden');
+check('Linden van der, M.', horae_display_name('Linden van der M.'), 'tussenvoegsel voor initialen');
 check('Holwerda, D.H.K.', horae_display_name('Holwerda, D.H.K.'), 'al ingekort blijft gelijk');
 check('Holwerda', horae_display_name('Holwerda'), 'alleen achternaam');
 
