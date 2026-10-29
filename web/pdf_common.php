@@ -60,7 +60,7 @@ function pdf_build_people_from_project_lines(array $lines, array $resourcesByNo,
     $people = [];
 
     foreach ($lines as $line) {
-        if (($line['Work_Type_Code'] ?? '') === 'KM') {
+        if (horae_is_km_line($line)) {
             continue;
         }
         if ((string) ($line['Job_No'] ?? '') !== $projectNo) {
@@ -84,7 +84,7 @@ function pdf_build_people_from_project_lines(array $lines, array $resourcesByNo,
             'key' => $resourceNo . '-' . $syntheticTsNo . '-' . $projectNo,
             'resourceNo' => $resourceNo,
             'bsn' => '',
-            'name' => $res['Name'] ?? $resourceNo,
+            'name' => horae_display_name((string) ($res['Name'] ?? $resourceNo)),
             'week' => $weekNo,
             'days' => array_fill(0, 7, 0.0),
             'total' => 0.0,
