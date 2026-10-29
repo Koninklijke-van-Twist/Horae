@@ -17,6 +17,8 @@ function check($expected, $actual, string $message): void
 check('Holwerda, D.', horae_display_name('Holwerda, Dirk'), 'achternaam, voornaam');
 check('Holwerda, D.', horae_display_name('Dirk Holwerda'), 'voornaam achternaam');
 check('van Dijk, J.', horae_display_name('Jan van Dijk'), 'voornaam tussenvoegsel achternaam');
+check('van Dijk, J.P.', horae_display_name('Jan Piet van Dijk'), 'voornamen tussenvoegsel achternaam');
+check('Holwerda, D.H.K.', horae_display_name('Dirk Hendrik Klaas Holwerda'), 'voornamen achternaam');
 check('Noordermeer, J.C.', horae_display_name('Noordermeer J.C.'), 'BC 1606 achternaam initialen');
 check('Prenter de, R.A.M.', horae_display_name('Prenter de R.A.M.'), 'BC 1664 achternaam tussenvoegsel initialen');
 check('Holwerda, D.H.K.', horae_display_name('Holwerda, D.H.K.'), 'al ingekort blijft gelijk');

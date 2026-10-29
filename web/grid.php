@@ -21,8 +21,16 @@ function horae_display_name(string $name): string
         if (preg_match('/^(\p{L}\.)+$/u', end($parts))) {
             return implode(' ', array_slice($parts, 0, -1)) . ', ' . mb_strtoupper(end($parts));
         }
-        $first = array_shift($parts);
-        $last = implode(' ', $parts);
+        $tv = ['van', 'de', 'der', 'den', 'het', "'t", 'ter', 'te', 'ten', 'in', 'op', 'la', 'le', 'du', 'di', 'da', 'von', 'vd', 'v.d.'];
+        $i = count($parts) - 1;
+        foreach (array_slice($parts, 1, -1, true) as $k => $part) {
+            if (in_array(mb_strtolower($part), $tv, true)) {
+                $i = $k;
+                break;
+            }
+        }
+        $first = implode(' ', array_slice($parts, 0, $i));
+        $last = implode(' ', array_slice($parts, $i));
     }
     $initials = '';
     foreach (preg_split('/[\s.\-]+/u', $first, -1, PREG_SPLIT_NO_EMPTY) as $part) {
