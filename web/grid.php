@@ -1,5 +1,35 @@
 <?php
 require_once __DIR__ . '/kvt_protect_dirs.php';
+
+/**
+ * Privacy: op het register nooit de volledige naam, alleen "Achternaam, V.L.".
+ * Gebruik deze helper overal waar een medewerkersnaam getoond of geëxporteerd wordt.
+ */
+function horae_display_name(string $name): string
+{
+    $name = trim(preg_replace('/\s+/u', ' ', $name));
+    if ($name === '') {
+        return '';
+    }
+    if (strpos($name, ',') !== false) {
+        [$last, $first] = array_map('trim', explode(',', $name, 2));
+    } else {
+        $parts = explode(' ', $name);
+        $last = (string) array_pop($parts);
+        $first = implode(' ', $parts);
+    }
+    $initials = '';
+    foreach (preg_split('/[\s.\-]+/u', $first, -1, PREG_SPLIT_NO_EMPTY) as $part) {
+        $initials .= mb_strtoupper(mb_substr($part, 0, 1)) . '.';
+    }
+    return $initials === '' ? $last : $last . ', ' . $initials;
+}
+
+/** KM-regels (Work_Type_Code = KM) tellen niet mee als uren. */
+function horae_is_km_line(array $line): bool
+{
+    return strcasecmp(trim((string) ($line['Work_Type_Code'] ?? '')), 'KM') === 0;
+}
 function dow_nl_index(string $dateYmd): int
 {
     // 0=Ma,1=Di,...6=Zo
@@ -25,7 +55,7 @@ function build_grid_from_planning_lines(array $lines, array $resourcesByNo, arra
         }
 
         $resourceNo = trim((string) ($line['No'] ?? ''));
-        if ($resourceNo === '') {
+        if ($resourceNo === '' || horae_is_km_line($line)) {
             continue;
         }
 
@@ -62,6 +92,7 @@ function build_grid_from_planning_lines(array $lines, array $resourcesByNo, arra
         if ($name === '') {
             $name = (string) ($res['Name'] ?? $resourceNo);
         }
+        $name = horae_display_name($name);
 
         if (!isset($dayTotals[$projectNo])) {
             $dayTotals[$projectNo] = array_fill(0, 7, 0.0);
@@ -145,7 +176,7 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
     $pYear = -1;
     $dayTotals = [];
     foreach ($lines as $line) {
-        if (($line['Work_Type_Code'] ?? '') === "KM")
+        if (horae_is_km_line($line))
             continue;
 
         if (in_array($line['Job_No'], $allowedProjects)) {
@@ -156,7 +187,7 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
             $res = $resourcesByNo[$resourceNo] ?? [];
             $emp = $employeesByNo[$resourceNo] ?? [];
             $bsn = '';
-            $name = $res['Name'] ?? $resourceNo;
+            $name = horae_display_name((string) ($res['Name'] ?? $resourceNo));
 
             if (!isset($dayTotals[$line['Job_No']])) {
                 $dayTotals[$line['Job_No']] = array_fill(0, 7, 0.0);
