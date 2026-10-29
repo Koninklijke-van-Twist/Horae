@@ -84,7 +84,8 @@ function pdf_build_people_from_project_lines(array $lines, array $resourcesByNo,
             'key' => $resourceNo . '-' . $syntheticTsNo . '-' . $projectNo,
             'resourceNo' => $resourceNo,
             'bsn' => '',
-            'name' => horae_display_name((string) ($res['Name'] ?? $resourceNo)),
+            'name' => horae_resource_name($resourceNo, $res),
+            'isPerson' => horae_resource_is_person($resourceNo, $res),
             'week' => $weekNo,
             'days' => array_fill(0, 7, 0.0),
             'total' => 0.0,
@@ -118,7 +119,7 @@ function pdf_load_resources_for_lines(array $lines, string $baseApp, array $auth
 
     $parts = array_map(fn($n) => "No eq '" . str_replace("'", "''", $n) . "'", $neededNos);
     $resFilter = rawurlencode(implode(' or ', $parts));
-    $resUrl = $baseApp . "AppResource?\$select=No,Name&\$filter={$resFilter}&\$format=json";
+    $resUrl = $baseApp . "AppResource?\$select=No,Name,Resource_Group_No&\$filter={$resFilter}&\$format=json";
     $resRows = odata_get_all($resUrl, $auth);
 
     foreach ($resRows as $r) {

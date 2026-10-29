@@ -8,36 +8,51 @@ require_once __DIR__ . '/kvt_protect_dirs.php';
 function horae_display_name(string $name): string
 {
     $name = trim(preg_replace('/\s+/u', ' ', $name));
-    if ($name === '') {
-        return '';
-    }
+    $name = preg_replace(['/\s+-\s.*$/u', '/\s*\(.*\)$/u', '/^Inlener\s+/iu'], '', $name);
+    $tv = ['van', 'de', 'der', 'den', 'het', "'t", 'ter', 'te', 'ten', 'in', 'op', 'la', 'le', 'du', 'di', 'da', 'von', 'vd', 'v.d.'];
+    $isTv = fn($t) => in_array(mb_strtolower($t), $tv, true);
+    $isIni = fn($t) => preg_match('/^((\p{L}\.)+|\p{Lu})$/u', $t) === 1;
+    $parts = $name === '' ? [] : explode(' ', $name);
     if (strpos($name, ',') !== false) {
         [$last, $first] = array_map('trim', explode(',', $name, 2));
+        $parts = $first === '' ? [] : explode(' ', $first);
+        $surname = $last === '' ? [] : explode(' ', $last);
+        $given = array_filter($parts, fn($t) => !$isTv($t));
+        $surname = array_merge($surname, array_filter($parts, $isTv));
+    } elseif (count($parts) < 2) {
+        return $name;
+    } elseif ($ini = array_filter($parts, $isIni)) {
+        $given = $ini;
+        $surname = array_diff_key($parts, $ini);
     } else {
-        $parts = explode(' ', $name);
-        if (count($parts) === 1) {
-            return $name;
-        }
-        $ini = preg_grep('/^(\p{L}\.)+$/u', $parts);
-        if ($ini) {
-            return implode(' ', array_diff_key($parts, $ini)) . ', ' . mb_strtoupper(implode('', $ini));
-        }
-        $tv = ['van', 'de', 'der', 'den', 'het', "'t", 'ter', 'te', 'ten', 'in', 'op', 'la', 'le', 'du', 'di', 'da', 'von', 'vd', 'v.d.'];
         $i = count($parts) - 1;
-        foreach (array_slice($parts, 1, -1, true) as $k => $part) {
-            if (in_array(mb_strtolower($part), $tv, true)) {
+        foreach (array_slice($parts, 1, -1, true) as $k => $t) {
+            if ($isTv($t)) {
                 $i = $k;
                 break;
             }
         }
-        $first = implode(' ', array_slice($parts, 0, $i));
-        $last = implode(' ', array_slice($parts, $i));
+        $given = array_slice($parts, 0, $i);
+        $surname = array_slice($parts, $i);
     }
+    $surname = implode(' ', array_merge(array_filter($surname, fn($t) => !$isTv($t)), array_filter($surname, $isTv)));
     $initials = '';
-    foreach (preg_split('/[\s.\-]+/u', $first, -1, PREG_SPLIT_NO_EMPTY) as $part) {
-        $initials .= mb_strtoupper(mb_substr($part, 0, 1)) . '.';
+    foreach ($given as $t) {
+        $initials .= $isIni($t) ? mb_strtoupper(rtrim($t, '.')) . '.' : mb_strtoupper(mb_substr($t, 0, 1)) . '.';
     }
-    return $initials === '' ? $last : $last . ', ' . $initials;
+    return $initials === '' ? $surname : $surname . ', ' . $initials;
+}
+
+/** Alleen echte medewerkers (numeriek No, geen LOAD BANKS-groep) krijgen initialen; overige resources ongewijzigd. */
+function horae_resource_is_person(string $resourceNo, array $res): bool
+{
+    return ctype_digit(trim($resourceNo)) && strcasecmp(trim((string) ($res['Resource_Group_No'] ?? '')), 'LOAD BANKS') !== 0;
+}
+
+function horae_resource_name(string $resourceNo, array $res): string
+{
+    $name = trim((string) ($res['Name'] ?? '')) ?: $resourceNo;
+    return horae_resource_is_person($resourceNo, $res) ? horae_display_name($name) : $name;
 }
 
 /** KM-regels (Work_Type_Code of Unit_of_Measure_Code = KM) tellen niet mee als uren. */
@@ -104,11 +119,7 @@ function build_grid_from_planning_lines(array $lines, array $resourcesByNo, arra
         $res = $resourcesByNo[$resourceNo] ?? [];
         $emp = $employeesByNo[$resourceNo] ?? [];
         $bsn = '';
-        $name = trim((string) ($line['Description'] ?? ''));
-        if ($name === '') {
-            $name = (string) ($res['Name'] ?? $resourceNo);
-        }
-        $name = horae_display_name($name);
+        $name = horae_resource_name($resourceNo, $res);
 
         if (!isset($dayTotals[$projectNo])) {
             $dayTotals[$projectNo] = array_fill(0, 7, 0.0);
@@ -123,6 +134,7 @@ function build_grid_from_planning_lines(array $lines, array $resourcesByNo, arra
                 'resourceNo' => $resourceNo,
                 'bsn' => $bsn,
                 'name' => $name,
+                'isPerson' => horae_resource_is_person($resourceNo, $res),
                 'week' => $isoWeek,
                 'days' => array_fill(0, 7, 0.0),
                 'total' => 0.0,
@@ -203,7 +215,7 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
             $res = $resourcesByNo[$resourceNo] ?? [];
             $emp = $employeesByNo[$resourceNo] ?? [];
             $bsn = '';
-            $name = horae_display_name((string) ($res['Name'] ?? $resourceNo));
+            $name = horae_resource_name($resourceNo, $res);
 
             if (!isset($dayTotals[$line['Job_No']])) {
                 $dayTotals[$line['Job_No']] = array_fill(0, 7, 0.0);
@@ -236,6 +248,7 @@ function build_timesheet_grid_from_fields(array $lines, array $resourcesByNo, ar
                     'resourceNo' => $resourceNo,
                 'bsn' => $bsn,
                     'name' => $name,
+                    'isPerson' => horae_resource_is_person($resourceNo, $res),
                     'week' => (int) substr((string) ($line['Week'] ?? ''), 4, 5),
                     'days' => array_fill(0, 7, 0.0),
                     'total' => 0.0,
